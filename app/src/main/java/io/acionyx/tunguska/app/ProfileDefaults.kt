@@ -47,12 +47,7 @@ internal fun defaultBootstrapProfile(): ProfileIr = ProfileIr(
             ),
         ),
     ),
-    dns = DnsMode.VpnDns(
-        servers = listOf(
-            "https://1.1.1.1/dns-query",
-            "https://1.0.0.1/dns-query",
-        ),
-    ),
+    dns = DnsMode.SystemDns,
     safety = SafetySettings(
         safeMode = true,
         compatibilityLocalProxy = false,

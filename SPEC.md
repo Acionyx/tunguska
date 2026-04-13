@@ -66,6 +66,10 @@ The primary product flow is:
 
 The active runtime lane for `v0.1.x` is `xray+tun2socks`.
 
+- Android `VpnService` retains ownership of the TUN descriptor
+- Xray is packaged from the Linux release lane for the current Android MVP path
+- imported share-link profiles default to `SystemDns`; explicit JSON profiles may still carry custom DNS settings
+
 Required properties:
 
 - `VpnService` owns the TUN interface
@@ -140,4 +144,3 @@ The release line is considered materially correct when:
 - GitHub Actions build installable APK artifacts and GitHub Releases publish versioned APKs
 
 The stronger security claim still depends on the real-device detector matrix in [docs/mvp-device-validation.md](./docs/mvp-device-validation.md).
-

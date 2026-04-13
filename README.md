@@ -63,6 +63,7 @@ Tunguska uses a split app/runtime design.
 The active MVP runtime lane is `xray+tun2socks`.
 
 - Android `VpnService` owns the TUN interface
+- the packaged Xray executable comes from the Linux release lane because it carries real traffic reliably in the Android app sandbox for the current MVP path
 - the runtime uses a loopback-only authenticated SOCKS bridge as an internal implementation detail
 - the bridge binds only to `127.0.0.1`
 - the bridge uses a random high port and random credentials per session
@@ -81,6 +82,14 @@ Tunguska supports three routing modes:
 Split routing is enforced through `VpnService.Builder` package policy, not only through UI state. The app package itself is excluded from the tunnel when required by the runtime lane. Loopback traffic is kept local by design.
 
 The UI also exposes a deterministic route preview so the user can inspect how a destination would be handled before connecting.
+
+## DNS Behavior
+
+Profiles imported from `vless://` or `ess://` share links default to `SystemDns` unless the user imports an explicit JSON profile with a different DNS policy.
+
+- this avoids broken DoH-over-IP defaults such as `https://1.1.1.1/dns-query`
+- legacy stored profiles using the old built-in DoH-over-IP defaults are migrated on load to `SystemDns`
+- custom JSON profiles can still carry explicit encrypted DNS settings
 
 ## Self-Audit And Fail-Closed Behavior
 

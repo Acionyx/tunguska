@@ -33,6 +33,9 @@ import kotlinx.serialization.json.put
 class XrayTun2SocksEmbeddedHost(
     private val clock: () -> Long = System::currentTimeMillis,
 ) : EmbeddedEngineHost {
+    // The staged request is still produced by the sing-box compiler contract.
+    // This fallback host consumes the canonical profile payload and replaces
+    // only the runtime strategy, not the app-facing compiled engine id.
     override val engineId: String = "singbox"
     override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS
 
@@ -186,7 +189,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
                 configFile = xrayConfigFile,
                 workingDir = workspace.rootDir,
             )
-            consumeProcessLogs(xrayProcess!!, "xray")
+            consumeProcessLogs(xrayProcess, "xray")
             Thread.sleep(XRAY_BOOT_DELAY_MS)
             if (!isProcessAlive(xrayProcess)) {
                 error("xray process exited during startup.")
@@ -202,7 +205,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
             if (tun2socksPid <= 0L) {
                 error("nativeStartProcessWithFd failed: errno=${-tun2socksPid}.")
             }
-            tunDupDescriptor?.close()
+            tunDupDescriptor.close()
             tunDupDescriptor = null
             Thread.sleep(TUN2SOCKS_BOOT_DELAY_MS)
             if (!isPidAlive(tun2socksPid)) {
@@ -220,7 +223,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
             )
             synchronized(lock) {
                 activeState = XrayTun2SocksActiveState(
-                    xrayProcess = xrayProcess!!,
+                    xrayProcess = xrayProcess,
                     tun2socksPid = tun2socksPid,
                     lease = lease,
                     bridge = bridge,

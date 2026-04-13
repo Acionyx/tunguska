@@ -12,7 +12,7 @@ data class ProfileIr(
     val outbound: VlessRealityOutbound,
     val vpn: VpnPolicy = VpnPolicy(),
     val routing: RoutingPolicy = RoutingPolicy(),
-    val dns: DnsMode = DnsMode.VpnDns(),
+    val dns: DnsMode = DnsMode.SystemDns,
     val safety: SafetySettings = SafetySettings(),
 ) {
     fun validate(): List<ValidationIssue> = buildList {
