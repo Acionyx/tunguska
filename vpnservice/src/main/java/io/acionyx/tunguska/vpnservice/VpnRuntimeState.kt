@@ -12,6 +12,7 @@ data class VpnRuntimeSnapshot(
     val phase: VpnRuntimePhase = VpnRuntimePhase.IDLE,
     val configHash: String? = null,
     val sessionLabel: String? = null,
+    val activeStrategy: EmbeddedRuntimeStrategyId? = null,
     val engineId: String? = null,
     val engineFormat: String? = null,
     val compiledPayloadBytes: Int = 0,
@@ -37,6 +38,16 @@ data class VpnRuntimeSnapshot(
     val engineSessionHealthStatus: EmbeddedEngineSessionHealthStatus = EmbeddedEngineSessionHealthStatus.UNKNOWN,
     val lastEngineHealthAtEpochMs: Long? = null,
     val lastEngineHealthSummary: String? = null,
+    val bridgePort: Int? = null,
+    val xrayPid: Long? = null,
+    val tun2socksPid: Long? = null,
+    val ownPackageBypassesVpn: Boolean = false,
+    val routedTrafficObserved: Boolean = false,
+    val lastRoutedTrafficAtEpochMs: Long? = null,
+    val dnsFailureObserved: Boolean = false,
+    val lastDnsFailureSummary: String? = null,
+    val recentXrayLogLines: List<String> = emptyList(),
+    val recentNativeEvents: List<String> = emptyList(),
     val sessionWorkspacePath: String? = null,
     val lastError: String? = null,
 )
@@ -59,6 +70,7 @@ object VpnRuntimeStore {
             phase = VpnRuntimePhase.STAGED,
             configHash = plan.configHash,
             sessionLabel = spec.sessionLabel,
+            activeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
             engineId = request.compiledConfig.engineId,
             engineFormat = request.compiledConfig.format,
             compiledPayloadBytes = request.compiledConfig.payload.toByteArray(Charsets.UTF_8).size,
@@ -68,6 +80,16 @@ object VpnRuntimeStore {
             excludedRouteCount = spec.excludedRoutes.size,
             mtu = spec.mtu,
             runtimeMode = plan.runtimeMode,
+            bridgePort = null,
+            xrayPid = null,
+            tun2socksPid = null,
+            ownPackageBypassesVpn = false,
+            routedTrafficObserved = false,
+            lastRoutedTrafficAtEpochMs = null,
+            dnsFailureObserved = false,
+            lastDnsFailureSummary = null,
+            recentXrayLogLines = emptyList(),
+            recentNativeEvents = emptyList(),
             lastError = null,
         )
         snapshot
@@ -143,6 +165,39 @@ object VpnRuntimeStore {
         snapshot
     }
 
+    fun recordRuntimeTelemetry(
+        strategy: EmbeddedRuntimeStrategyId = snapshot.activeStrategy ?: EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+        bridgePort: Int? = snapshot.bridgePort,
+        xrayPid: Long? = snapshot.xrayPid,
+        tun2socksPid: Long? = snapshot.tun2socksPid,
+        ownPackageBypassesVpn: Boolean = snapshot.ownPackageBypassesVpn,
+        routedTrafficObserved: Boolean = snapshot.routedTrafficObserved,
+        lastRoutedTrafficAtEpochMs: Long? = snapshot.lastRoutedTrafficAtEpochMs,
+        dnsFailureObserved: Boolean = snapshot.dnsFailureObserved,
+        lastDnsFailureSummary: String? = snapshot.lastDnsFailureSummary,
+        xrayLogLine: String? = null,
+        nativeEvent: String? = null,
+    ): VpnRuntimeSnapshot = synchronized(lock) {
+        snapshot = snapshot.copy(
+            activeStrategy = strategy,
+            bridgePort = bridgePort,
+            xrayPid = xrayPid,
+            tun2socksPid = tun2socksPid,
+            ownPackageBypassesVpn = ownPackageBypassesVpn,
+            routedTrafficObserved = routedTrafficObserved,
+            lastRoutedTrafficAtEpochMs = lastRoutedTrafficAtEpochMs,
+            dnsFailureObserved = dnsFailureObserved,
+            lastDnsFailureSummary = lastDnsFailureSummary,
+            recentXrayLogLines = xrayLogLine
+                ?.let { snapshot.recentXrayLogLines.appendBounded(it) }
+                ?: snapshot.recentXrayLogLines,
+            recentNativeEvents = nativeEvent
+                ?.let { snapshot.recentNativeEvents.appendBounded(it) }
+                ?: snapshot.recentNativeEvents,
+        )
+        snapshot
+    }
+
     fun markFailClosed(reason: String): VpnRuntimeSnapshot = synchronized(lock) {
         snapshot = snapshot.copy(
             phase = VpnRuntimePhase.FAIL_CLOSED,
@@ -158,3 +213,5 @@ object VpnRuntimeStore {
         snapshot
     }
 }
+
+private fun List<String>.appendBounded(value: String): List<String> = (this + value.trim().take(240)).takeLast(8)

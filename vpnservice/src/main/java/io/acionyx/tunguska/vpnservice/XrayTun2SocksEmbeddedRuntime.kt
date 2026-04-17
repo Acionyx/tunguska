@@ -143,6 +143,11 @@ private class XrayTun2SocksEmbeddedEngineSession(
         }
         RuntimeListenerAllowanceStore.clear()
         val bridge = AuthenticatedLocalBridge.generate()
+        VpnRuntimeStore.recordRuntimeTelemetry(
+            strategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+            bridgePort = bridge.port,
+            nativeEvent = "Generated authenticated loopback bridge on 127.0.0.1:${bridge.port}.",
+        )
         val compiled = runCatching {
             XrayCompatConfigCompiler.compile(profile = profile, bridge = bridge)
         }.getOrElse { error ->
@@ -183,11 +188,18 @@ private class XrayTun2SocksEmbeddedEngineSession(
             val rlimitResult = runCatching { VpnNativeProcessBridge.nativeSetMaxFds(MAX_RUNTIME_FDS) }.getOrDefault(0)
             if (rlimitResult != 0) {
                 Log.w(TAG, "nativeSetMaxFds returned $rlimitResult; continuing with current limits.")
+                VpnRuntimeStore.recordRuntimeTelemetry(
+                    nativeEvent = "nativeSetMaxFds returned $rlimitResult; continuing with current limits.",
+                )
             }
 
             xrayProcess = startXrayProcess(
                 configFile = xrayConfigFile,
                 workingDir = workspace.rootDir,
+            )
+            VpnRuntimeStore.recordRuntimeTelemetry(
+                ownPackageBypassesVpn = tunnelBuilder.runtimePackageBypassesVpn,
+                nativeEvent = "Started xray child process.",
             )
             consumeProcessLogs(xrayProcess, "xray")
             Thread.sleep(XRAY_BOOT_DELAY_MS)
@@ -201,6 +213,12 @@ private class XrayTun2SocksEmbeddedEngineSession(
                 tunnelFd = tunFd,
                 bridge = bridge,
                 mtu = lease.spec.mtu,
+            )
+            VpnRuntimeStore.recordRuntimeTelemetry(
+                bridgePort = bridge.port,
+                tun2socksPid = tun2socksPid.takeIf { it > 0L },
+                ownPackageBypassesVpn = tunnelBuilder.runtimePackageBypassesVpn,
+                nativeEvent = "Started tun2socks pid=$tun2socksPid on bridge port ${bridge.port}.",
             )
             if (tun2socksPid <= 0L) {
                 error("nativeStartProcessWithFd failed: errno=${-tun2socksPid}.")
@@ -227,6 +245,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
                     tun2socksPid = tun2socksPid,
                     lease = lease,
                     bridge = bridge,
+                    ownPackageBypassesVpn = tunnelBuilder.runtimePackageBypassesVpn,
                 )
             }
             EmbeddedEngineSessionResult(
@@ -243,6 +262,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
                     tun2socksPid = tun2socksPid,
                     lease = lease,
                     bridge = bridge,
+                    ownPackageBypassesVpn = tunnelBuilder.runtimePackageBypassesVpn,
                 ),
             )
             failure(error.message ?: error.javaClass.simpleName)
@@ -364,11 +384,17 @@ private class XrayTun2SocksEmbeddedEngineSession(
             if (killResult != 0 && killResult != Int.MIN_VALUE) {
                 errors += "nativeKillProcess returned $killResult for tun2socks."
             }
+            VpnRuntimeStore.recordRuntimeTelemetry(
+                nativeEvent = "Stopped tun2socks pid=${state.tun2socksPid} with result=$killResult.",
+            )
         }
         state.xrayProcess?.let { process ->
             runCatching {
                 process.destroyForcibly()
                 process.waitFor()
+                VpnRuntimeStore.recordRuntimeTelemetry(
+                    nativeEvent = "Destroyed xray child process.",
+                )
             }.onFailure { error ->
                 errors += error.message ?: error.javaClass.simpleName
             }
@@ -385,6 +411,30 @@ private class XrayTun2SocksEmbeddedEngineSession(
                 process.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
                         Log.i(TAG, "[$name] $line")
+                        when {
+                            line.contains("accepted ", ignoreCase = true) -> {
+                                VpnRuntimeStore.recordRuntimeTelemetry(
+                                    routedTrafficObserved = true,
+                                    lastRoutedTrafficAtEpochMs = clock(),
+                                    xrayLogLine = "[$name] $line",
+                                )
+                            }
+
+                            line.contains("dns", ignoreCase = true) &&
+                                (line.contains("fail", ignoreCase = true) || line.contains("error", ignoreCase = true)) -> {
+                                VpnRuntimeStore.recordRuntimeTelemetry(
+                                    dnsFailureObserved = true,
+                                    lastDnsFailureSummary = line.take(240),
+                                    xrayLogLine = "[$name] $line",
+                                )
+                            }
+
+                            else -> {
+                                VpnRuntimeStore.recordRuntimeTelemetry(
+                                    xrayLogLine = "[$name] $line",
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -422,6 +472,7 @@ private data class XrayTun2SocksActiveState(
     val tun2socksPid: Long,
     val lease: TunnelInterfaceLease,
     val bridge: AuthenticatedLocalBridge,
+    val ownPackageBypassesVpn: Boolean,
 )
 
 private data class XrayBinarySet(
@@ -457,6 +508,8 @@ private class XrayTunnelRuntimeBuilder(
     private val unsupportedExcludedRoutesMutable = mutableListOf<IpSubnet>()
     private val disallowedPackages = linkedSetOf<String>()
     private var hasAllowedApplications: Boolean = false
+    private var effectiveAllowedApplications: Int = 0
+    private var runtimePackageBypassesVpnMutable: Boolean = false
 
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -480,6 +533,9 @@ private class XrayTunnelRuntimeBuilder(
 
     override val unsupportedExcludedRoutes: List<IpSubnet>
         get() = unsupportedExcludedRoutesMutable.toList()
+
+    val runtimePackageBypassesVpn: Boolean
+        get() = runtimePackageBypassesVpnMutable
 
     override fun setSession(label: String) {
         builder.setSession(label)
@@ -519,9 +575,14 @@ private class XrayTunnelRuntimeBuilder(
     }
 
     override fun addAllowedApplication(packageName: String) {
+        if (packageName == appPackageName) {
+            runtimePackageBypassesVpnMutable = true
+            return
+        }
         try {
             builder.addAllowedApplication(packageName)
             hasAllowedApplications = true
+            effectiveAllowedApplications += 1
         } catch (_: PackageManager.NameNotFoundException) {
             throw IllegalArgumentException("Allowed application '$packageName' is not installed.")
         }
@@ -531,6 +592,9 @@ private class XrayTunnelRuntimeBuilder(
         try {
             if (disallowedPackages.add(packageName)) {
                 builder.addDisallowedApplication(packageName)
+                if (packageName == appPackageName) {
+                    runtimePackageBypassesVpnMutable = true
+                }
             }
         } catch (_: PackageManager.NameNotFoundException) {
             throw IllegalArgumentException("Disallowed application '$packageName' is not installed.")
@@ -538,6 +602,11 @@ private class XrayTunnelRuntimeBuilder(
     }
 
     override fun establish(): TunnelInterfaceHandle? {
+        if (sessionPlan.splitTunnelMode is io.acionyx.tunguska.domain.SplitTunnelMode.Allowlist && effectiveAllowedApplications == 0) {
+            throw IllegalStateException(
+                "Allowlist mode has no routable applications after excluding the Tunguska runtime package.",
+            )
+        }
         if (!hasAllowedApplications && sessionPlan.splitTunnelMode !is io.acionyx.tunguska.domain.SplitTunnelMode.Allowlist) {
             addDisallowedApplication(appPackageName)
         }

@@ -29,6 +29,7 @@ object VpnRuntimeContract {
 
     private const val KEY_PHASE = "phase"
     private const val KEY_SESSION_LABEL = "session_label"
+    private const val KEY_ACTIVE_STRATEGY = "active_strategy"
     private const val KEY_COMPILED_PAYLOAD_BYTES = "compiled_payload_bytes"
     private const val KEY_ENGINE_HOST_STATUS = "engine_host_status"
     private const val KEY_LAST_ENGINE_HOST_AT = "last_engine_host_at"
@@ -39,6 +40,16 @@ object VpnRuntimeContract {
     private const val KEY_ENGINE_SESSION_HEALTH_STATUS = "engine_session_health_status"
     private const val KEY_LAST_ENGINE_HEALTH_AT = "last_engine_health_at"
     private const val KEY_LAST_ENGINE_HEALTH_SUMMARY = "last_engine_health_summary"
+    private const val KEY_BRIDGE_PORT = "bridge_port"
+    private const val KEY_XRAY_PID = "xray_pid"
+    private const val KEY_TUN2SOCKS_PID = "tun2socks_pid"
+    private const val KEY_OWN_PACKAGE_BYPASSES_VPN = "own_package_bypasses_vpn"
+    private const val KEY_ROUTED_TRAFFIC_OBSERVED = "routed_traffic_observed"
+    private const val KEY_LAST_ROUTED_TRAFFIC_AT = "last_routed_traffic_at"
+    private const val KEY_DNS_FAILURE_OBSERVED = "dns_failure_observed"
+    private const val KEY_LAST_DNS_FAILURE_SUMMARY = "last_dns_failure_summary"
+    private const val KEY_RECENT_XRAY_LOG_LINES = "recent_xray_log_lines"
+    private const val KEY_RECENT_NATIVE_EVENTS = "recent_native_events"
     private const val KEY_ALLOW_COUNT = "allow_count"
     private const val KEY_DENY_COUNT = "deny_count"
     private const val KEY_ROUTE_COUNT = "route_count"
@@ -159,6 +170,7 @@ object VpnRuntimeContract {
         putString(KEY_PHASE, snapshot.phase.name)
         putString(KEY_CONFIG_HASH, snapshot.configHash)
         putString(KEY_SESSION_LABEL, snapshot.sessionLabel)
+        putString(KEY_ACTIVE_STRATEGY, snapshot.activeStrategy?.name)
         putString(KEY_ENGINE_ID, snapshot.engineId)
         putString(KEY_ENGINE_FORMAT, snapshot.engineFormat)
         putInt(KEY_COMPILED_PAYLOAD_BYTES, snapshot.compiledPayloadBytes)
@@ -184,6 +196,16 @@ object VpnRuntimeContract {
         putString(KEY_ENGINE_SESSION_HEALTH_STATUS, snapshot.engineSessionHealthStatus.name)
         putLong(KEY_LAST_ENGINE_HEALTH_AT, snapshot.lastEngineHealthAtEpochMs ?: -1L)
         putString(KEY_LAST_ENGINE_HEALTH_SUMMARY, snapshot.lastEngineHealthSummary)
+        putInt(KEY_BRIDGE_PORT, snapshot.bridgePort ?: -1)
+        putLong(KEY_XRAY_PID, snapshot.xrayPid ?: -1L)
+        putLong(KEY_TUN2SOCKS_PID, snapshot.tun2socksPid ?: -1L)
+        putBoolean(KEY_OWN_PACKAGE_BYPASSES_VPN, snapshot.ownPackageBypassesVpn)
+        putBoolean(KEY_ROUTED_TRAFFIC_OBSERVED, snapshot.routedTrafficObserved)
+        putLong(KEY_LAST_ROUTED_TRAFFIC_AT, snapshot.lastRoutedTrafficAtEpochMs ?: -1L)
+        putBoolean(KEY_DNS_FAILURE_OBSERVED, snapshot.dnsFailureObserved)
+        putString(KEY_LAST_DNS_FAILURE_SUMMARY, snapshot.lastDnsFailureSummary)
+        putStringArrayList(KEY_RECENT_XRAY_LOG_LINES, ArrayList(snapshot.recentXrayLogLines))
+        putStringArrayList(KEY_RECENT_NATIVE_EVENTS, ArrayList(snapshot.recentNativeEvents))
         putString(KEY_SESSION_WORKSPACE_PATH, snapshot.sessionWorkspacePath)
         putString(KEY_LAST_ERROR, snapshot.lastError)
     }
@@ -192,6 +214,7 @@ object VpnRuntimeContract {
         phase = bundle.getString(KEY_PHASE)?.let(VpnRuntimePhase::valueOf) ?: VpnRuntimePhase.IDLE,
         configHash = bundle.getString(KEY_CONFIG_HASH),
         sessionLabel = bundle.getString(KEY_SESSION_LABEL),
+        activeStrategy = bundle.getString(KEY_ACTIVE_STRATEGY)?.let(EmbeddedRuntimeStrategyId::valueOf),
         engineId = bundle.getString(KEY_ENGINE_ID),
         engineFormat = bundle.getString(KEY_ENGINE_FORMAT),
         compiledPayloadBytes = bundle.getInt(KEY_COMPILED_PAYLOAD_BYTES, 0),
@@ -229,6 +252,16 @@ object VpnRuntimeContract {
             ?: EmbeddedEngineSessionHealthStatus.UNKNOWN,
         lastEngineHealthAtEpochMs = bundle.getLong(KEY_LAST_ENGINE_HEALTH_AT, -1L).takeIf { it >= 0L },
         lastEngineHealthSummary = bundle.getString(KEY_LAST_ENGINE_HEALTH_SUMMARY),
+        bridgePort = bundle.getInt(KEY_BRIDGE_PORT, -1).takeIf { it >= 0 },
+        xrayPid = bundle.getLong(KEY_XRAY_PID, -1L).takeIf { it > 0L },
+        tun2socksPid = bundle.getLong(KEY_TUN2SOCKS_PID, -1L).takeIf { it > 0L },
+        ownPackageBypassesVpn = bundle.getBoolean(KEY_OWN_PACKAGE_BYPASSES_VPN, false),
+        routedTrafficObserved = bundle.getBoolean(KEY_ROUTED_TRAFFIC_OBSERVED, false),
+        lastRoutedTrafficAtEpochMs = bundle.getLong(KEY_LAST_ROUTED_TRAFFIC_AT, -1L).takeIf { it >= 0L },
+        dnsFailureObserved = bundle.getBoolean(KEY_DNS_FAILURE_OBSERVED, false),
+        lastDnsFailureSummary = bundle.getString(KEY_LAST_DNS_FAILURE_SUMMARY),
+        recentXrayLogLines = bundle.getStringArrayList(KEY_RECENT_XRAY_LOG_LINES)?.toList().orEmpty(),
+        recentNativeEvents = bundle.getStringArrayList(KEY_RECENT_NATIVE_EVENTS)?.toList().orEmpty(),
         sessionWorkspacePath = bundle.getString(KEY_SESSION_WORKSPACE_PATH),
         lastError = bundle.getString(KEY_LAST_ERROR),
     )

@@ -4,15 +4,16 @@ This document defines the real-device validation matrix for Tunguska `v0.1.x`.
 
 ## Current Status
 
-- Release exists: `v0.1.0`
-- Emulator smoke path exists and reaches `RUNNING`
+- Release exists: `v0.2.1`
+- Headed emulator smoke proves import, connect, Chrome public-IP change, stop, and split-routing parity with a helper app
+- Functional real-device traffic has been confirmed
 - Full detector-backed validation on a physical device is still pending
 
 ## Active Runtime Under Test
 
 - active runtime: `xray+tun2socks`
 - comparison runtime: `libbox`
-- product success metric: `import or scan -> preview -> confirm -> connect -> pass traffic -> stop -> fail closed on error`
+- product success metric: `import or scan -> preview -> confirm -> connect -> Chrome IP changes -> traffic passes -> stop -> direct IP returns`
 
 ## Blocking Findings
 
@@ -55,7 +56,7 @@ Helper scripts:
 3. Import the same profile by camera QR.
 4. Import the same profile by image QR.
 5. Save the validated profile and obtain `VpnService` permission.
-6. Connect, pass traffic, disconnect, and reconnect.
+6. Connect, confirm Chrome or another routed client moves to the VPN egress IP, disconnect, and reconnect.
 7. Validate full tunnel, allowlist, and denylist behavior with at least one excluded app and one routed app.
 8. Confirm loopback stays local.
 9. Run `RKNHardering` and confirm no bypass-grade findings.
@@ -70,4 +71,3 @@ Helper scripts:
 - The product does claim that bypass-grade local attack surfaces are the real blocker.
 - If `xray+tun2socks` passes this matrix, it remains the primary runtime for the next release line.
 - If `libbox` later proves materially better on the same matrix, it can replace the active lane without changing profile storage or Binder contracts.
-

@@ -13,7 +13,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -57,6 +58,7 @@ fun ImportSection(
     onImportError: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val compactLayout = LocalConfiguration.current.screenWidthDp <= 320
     var cameraScannerVisible by remember { mutableStateOf(false) }
     val requestCameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -78,11 +80,13 @@ fun ImportSection(
     }
 
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF9F5)),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5DED1)),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(if (compactLayout) 16.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Secure Import", style = MaterialTheme.typography.titleLarge)
@@ -110,10 +114,10 @@ fun ImportSection(
                     .testTag(UiTags.IMPORT_DRAFT_FIELD),
                 minLines = 4,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ImportActionGroup(compactLayout = compactLayout) {
                 Button(
                     onClick = onValidateDraft,
-                    modifier = Modifier.testTag(UiTags.VALIDATE_IMPORT_BUTTON),
+                    modifier = importActionModifier(compactLayout).testTag(UiTags.VALIDATE_IMPORT_BUTTON),
                 ) {
                     Text("Validate Import")
                 }
@@ -121,7 +125,7 @@ fun ImportSection(
                     onClick = {
                         requestCameraPermission.launch(Manifest.permission.CAMERA)
                     },
-                    modifier = Modifier.testTag(UiTags.OPEN_CAMERA_BUTTON),
+                    modifier = importActionModifier(compactLayout).testTag(UiTags.OPEN_CAMERA_BUTTON),
                 ) {
                     Text("Open Camera")
                 }
@@ -131,7 +135,7 @@ fun ImportSection(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                         )
                     },
-                    modifier = Modifier.testTag(UiTags.SCAN_IMAGE_BUTTON),
+                    modifier = importActionModifier(compactLayout).testTag(UiTags.SCAN_IMAGE_BUTTON),
                 ) {
                     Text("Scan Image")
                 }
@@ -139,6 +143,7 @@ fun ImportSection(
 
             state.importPreview?.let { preview ->
                 Card(
+                    modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFF2EEE4)),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
                 ) {
@@ -160,16 +165,16 @@ fun ImportSection(
                                 Text("Warning: $warning", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ImportActionGroup(compactLayout = compactLayout) {
                             Button(
                                 onClick = onConfirmImport,
-                                modifier = Modifier.testTag(UiTags.CONFIRM_IMPORT_BUTTON),
+                                modifier = importActionModifier(compactLayout).testTag(UiTags.CONFIRM_IMPORT_BUTTON),
                             ) {
                                 Text("Confirm Import")
                             }
                             TextButton(
                                 onClick = onDiscardImport,
-                                modifier = Modifier.testTag(UiTags.DISCARD_IMPORT_BUTTON),
+                                modifier = importActionModifier(compactLayout).testTag(UiTags.DISCARD_IMPORT_BUTTON),
                             ) {
                                 Text("Discard")
                             }
@@ -278,6 +283,7 @@ private fun CameraQrScannerCard(
     }
 
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFF2EEE4)),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
     ) {
@@ -285,9 +291,10 @@ private fun CameraQrScannerCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("Live QR Scanner", style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = onClose) {
@@ -345,3 +352,29 @@ private fun newQrScannerClient() = BarcodeScanning.getClient(
         .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
         .build(),
 )
+
+@Composable
+private fun ImportActionGroup(
+    compactLayout: Boolean,
+    content: @Composable () -> Unit,
+) {
+    if (compactLayout) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            content()
+        }
+    } else {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+private fun importActionModifier(compactLayout: Boolean): Modifier =
+    if (compactLayout) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier
+    }

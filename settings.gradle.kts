@@ -27,6 +27,7 @@ include(
     ":engine:api",
     ":engine:singbox",
     ":security:audit",
+    ":trafficprobe",
     ":tools:ingest",
     ":vpnservice",
 )

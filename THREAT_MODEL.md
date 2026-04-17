@@ -107,7 +107,7 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 These risks are known and currently accepted or still under validation:
 
 - The active runtime still uses an internal authenticated loopback bridge instead of a pure no-loopback data plane.
-- The full detector matrix has not yet been completed on physical hardware.
+- The full detector matrix has not yet been completed on physical hardware, even though functional tunneled traffic has already been confirmed on a real phone.
 - Subscription and notification code still exists in the app process, even though it is not the primary product path.
 - The current public release is a sideload release, not a final store-distributed production channel.
 
@@ -124,4 +124,3 @@ The following still block a stronger security claim:
 ## Validation Reference
 
 The detector and device validation process is documented in [docs/mvp-device-validation.md](./docs/mvp-device-validation.md).
-

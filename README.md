@@ -2,7 +2,7 @@
 
 Tunguska is an Android VPN client for VLESS + REALITY profiles with a security-first runtime, staged profile import, per-app split routing, and fail-closed behavior.
 
-Current release: `v0.1.0`
+Current release: `v0.2.1`
 
 ## Product Scope
 
@@ -16,6 +16,15 @@ Tunguska currently focuses on one path:
 - export encrypted backup or redacted diagnostics when needed
 
 The app contains subscription and notification code from earlier iterations, but that surface is frozen and secondary. It is not the primary product path.
+
+## First Screen
+
+The first screen is intentionally product-first:
+
+- primary status and `Connect` / `Stop` actions are visible before secondary controls
+- staged import, QR scan, and diagnostics stay on one screen
+- advanced and frozen secondary surfaces are still available, but collapsed out of the default path
+- compact layout rules keep the first screen usable down to `320dp` width without broken wrapping or clipped primary actions
 
 ## Supported Platform
 
@@ -70,6 +79,19 @@ The active MVP runtime lane is `xray+tun2socks`.
 - management APIs, debug endpoints, and pprof-style listeners are not enabled in the active lane
 
 `libbox` is still bundled as a secondary comparison lane, but it is not the active runtime used for the current release.
+
+## Functional Validation
+
+Tunguska does not treat `RUNNING` as success on its own.
+
+Current proof for `v0.2.1`:
+
+- headed emulator smoke imports a real VLESS + REALITY share link
+- the Android VPN permission dialog is completed through UI Automator
+- Chrome shows one public IP without VPN and a different public IP with VPN enabled
+- stopping the VPN returns Chrome to the direct IP
+- a separate helper app proves full-tunnel, allowlist, and denylist behavior
+- real-device testing has already confirmed live tunnel traffic instead of a zero-byte fake connect
 
 ## Split Routing
 
@@ -143,18 +165,18 @@ Current security properties in the shipped code:
 
 ## Current Limitations
 
-Tunguska `v0.1.0` is a real sideload release, but it still has clear limits.
+Tunguska `v0.2.1` is a real sideload release, but it still has clear limits.
 
 - The current release is not Play-signed or store-distributed.
 - The active runtime uses an authenticated internal loopback bridge rather than a pure no-loopback embedded transport.
-- The physical-device detector matrix is still pending. The app has passed emulator smoke tests with a real VLESS + REALITY profile, but not the full detector set on a real phone yet.
+- The full physical-device detector matrix is still pending. Functional traffic has been confirmed on a real phone, and headed emulator smoke now proves direct-vs-VPN IP change plus split-routing parity, but the detector suite is not fully closed yet.
 - Generic VPN visibility such as `TRANSPORT_VPN`, foreground notification presence, and `tun0` visibility is not treated as a defect by itself.
 
 ## Releases
 
 Installable APKs are available from GitHub Releases and from GitHub Actions artifacts.
 
-- GitHub release assets are published for version tags such as `v0.1.0`
+- GitHub release assets are published for version tags such as `v0.2.1`
 - the main sideload artifact is `tunguska-vX.Y.Z-internal.apk`
 - a matching `.sha256` file is published for each APK
 

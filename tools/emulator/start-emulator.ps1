@@ -1,5 +1,9 @@
 param(
-    [string]$AvdName = "tunguska-api36"
+    [string]$AvdName = "tunguska-api36",
+    [switch]$Headless,
+    [switch]$ColdBoot,
+    [switch]$WipeData,
+    [string]$CameraBack = "emulated"
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,9 +20,26 @@ $stdout = "C:\src\tunguska\logs\emulator-stdout.log"
 $stderr = "C:\src\tunguska\logs\emulator-stderr.log"
 
 if (-not (Get-Process | Where-Object { $_.ProcessName -like "emulator*" -or $_.ProcessName -like "qemu-system*" })) {
+    $arguments = @(
+        "-avd", $AvdName,
+        "-no-boot-anim",
+        "-no-audio",
+        "-gpu", "swiftshader_indirect",
+        "-camera-back", $CameraBack
+    )
+    if ($Headless) {
+        $arguments += "-no-window"
+    }
+    if ($ColdBoot -or $WipeData) {
+        $arguments += "-no-snapshot-load"
+        $arguments += "-no-snapshot-save"
+    }
+    if ($WipeData) {
+        $arguments += "-wipe-data"
+    }
     Start-Process `
         -FilePath $emulator `
-        -ArgumentList "-avd $AvdName -no-snapshot -no-boot-anim -no-audio -no-window -gpu swiftshader_indirect" `
+        -ArgumentList $arguments `
         -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr | Out-Null
 }
@@ -38,4 +59,4 @@ if ($boot -ne "1") {
 & $adb shell settings put global transition_animation_scale 0 | Out-Null
 & $adb shell settings put global animator_duration_scale 0 | Out-Null
 
-Write-Host "Emulator ready."
+Write-Host "Emulator ready (headed=$(!$Headless))."

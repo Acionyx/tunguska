@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -87,6 +89,7 @@ private fun TunguskaApp(
 ) {
     val state = viewModel.uiState
     val context = LocalContext.current
+    val compactLayout = LocalConfiguration.current.screenWidthDp <= 320
     val subscriptionBringIntoViewRequester = remember { BringIntoViewRequester() }
     var showAdvancedDiagnostics by remember { mutableStateOf(false) }
     var showFrozenSecondarySurface by remember { mutableStateOf(false) }
@@ -134,8 +137,11 @@ private fun TunguskaApp(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                         .testTag(UiTags.MAIN_SCROLL_COLUMN)
-                        .padding(horizontal = 20.dp, vertical = 28.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                        .padding(
+                            horizontal = if (compactLayout) 12.dp else 20.dp,
+                            vertical = if (compactLayout) 20.dp else 28.dp,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(if (compactLayout) 12.dp else 16.dp),
                 ) {
                     HeroCard(
                         title = "Tunguska",
@@ -179,15 +185,19 @@ private fun TunguskaApp(
                             "Local bridge: loopback-only, authenticated, per-session random port and credentials, and no management API surface.",
                             "Split routing: ${splitTunnelDetail(state.tunnelPlan.splitTunnelMode)}.",
                             "Listener audit: ${state.runtimeSnapshot.auditStatus} ${state.runtimeSnapshot.lastAuditSummary ?: ""}".trim(),
+                            "Routed traffic observed: ${state.runtimeSnapshot.routedTrafficObserved}. DNS failure observed: ${state.runtimeSnapshot.dnsFailureObserved}.",
                         ),
                         actions = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { showAdvancedDiagnostics = !showAdvancedDiagnostics }) {
-                                    Text(if (showAdvancedDiagnostics) "Hide Advanced" else "Show Advanced")
-                                }
-                                Button(onClick = { showFrozenSecondarySurface = !showFrozenSecondarySurface }) {
-                                    Text(if (showFrozenSecondarySurface) "Hide Secondary" else "Secondary Surface")
-                                }
+                            ActionGroup {
+                                ActionButton(
+                                    text = if (showAdvancedDiagnostics) "Hide Advanced" else "Show Advanced",
+                                    onClick = { showAdvancedDiagnostics = !showAdvancedDiagnostics },
+                                )
+                                ActionButton(
+                                    text = if (showFrozenSecondarySurface) "Hide Secondary" else "Secondary Surface",
+                                    onClick = { showFrozenSecondarySurface = !showFrozenSecondarySurface },
+                                    primary = false,
+                                )
                             }
                         },
                     )
@@ -201,13 +211,9 @@ private fun TunguskaApp(
                             "Created at: ${state.exportState.lastCreatedAt ?: "n/a"}",
                         ),
                         actions = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { viewModel.exportEncryptedBackup() }) {
-                                    Text("Encrypted Backup")
-                                }
-                                Button(onClick = { viewModel.buildDiagnosticBundle() }) {
-                                    Text("Redacted Audit")
-                                }
+                            ActionGroup {
+                                ActionButton(text = "Encrypted Backup", onClick = { viewModel.exportEncryptedBackup() })
+                                ActionButton(text = "Redacted Audit", onClick = { viewModel.buildDiagnosticBundle() })
                             }
                         },
                     )
@@ -220,22 +226,23 @@ private fun TunguskaApp(
                             add("Primary runtime: xray+tun2socks. Comparison runtime: libbox.")
                         },
                         actions = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
+                            ActionGroup {
+                                ActionButton(
+                                    text = if (showAdvancedDiagnostics) "Hide Diagnostics" else "Show Diagnostics",
                                     onClick = { showAdvancedDiagnostics = !showAdvancedDiagnostics },
                                     modifier = Modifier.testTag(UiTags.SHOW_DIAGNOSTICS_BUTTON),
-                                ) {
-                                    Text(if (showAdvancedDiagnostics) "Hide Diagnostics" else "Show Diagnostics")
-                                }
-                                Button(onClick = { viewModel.refreshRuntimeStatus() }) {
-                                    Text("Refresh Runtime")
-                                }
-                                Button(
+                                )
+                                ActionButton(
+                                    text = "Refresh Runtime",
+                                    onClick = { viewModel.refreshRuntimeStatus() },
+                                    primary = false,
+                                )
+                                ActionButton(
+                                    text = "Restage",
                                     onClick = { viewModel.stageRuntime() },
                                     modifier = Modifier.testTag(UiTags.RESTAGE_RUNTIME_BUTTON),
-                                ) {
-                                    Text("Restage")
-                                }
+                                    primary = false,
+                                )
                             }
                         },
                     )
@@ -260,13 +267,9 @@ private fun TunguskaApp(
                                 "Last storage error: ${state.profileStorage.error ?: "none"}",
                             ),
                             actions = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.reloadProfile() }) {
-                                        Text("Reload")
-                                    }
-                                    Button(onClick = { viewModel.resealProfile() }) {
-                                        Text("Reseal")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Reload", onClick = { viewModel.reloadProfile() }, primary = false)
+                                    ActionButton(text = "Reseal", onClick = { viewModel.resealProfile() }, primary = false)
                                 }
                             },
                         )
@@ -298,6 +301,15 @@ private fun TunguskaApp(
                             title = "Runtime Internals",
                             body = listOf(
                                 "Payload bytes: ${state.runtimeSnapshot.compiledPayloadBytes}",
+                                "Strategy: ${state.runtimeSnapshot.activeStrategy ?: "n/a"}",
+                                "Bridge port: ${state.runtimeSnapshot.bridgePort ?: 0}",
+                                "xray pid: ${state.runtimeSnapshot.xrayPid ?: 0}",
+                                "tun2socks pid: ${state.runtimeSnapshot.tun2socksPid ?: 0}",
+                                "Own package bypasses VPN: ${state.runtimeSnapshot.ownPackageBypassesVpn}",
+                                "Routed traffic observed: ${state.runtimeSnapshot.routedTrafficObserved}",
+                                "Last routed traffic: ${formatTimestamp(state.runtimeSnapshot.lastRoutedTrafficAtEpochMs)}",
+                                "DNS failure observed: ${state.runtimeSnapshot.dnsFailureObserved}",
+                                "DNS failure summary: ${state.runtimeSnapshot.lastDnsFailureSummary ?: "none"}",
                                 "MTU: ${state.runtimeSnapshot.mtu ?: 0}",
                                 "Routes: ${state.runtimeSnapshot.routeCount} / excluded ${state.runtimeSnapshot.excludedRouteCount}",
                                 "Audit findings: ${state.runtimeSnapshot.auditFindingCount}",
@@ -311,6 +323,8 @@ private fun TunguskaApp(
                                 "Session summary: ${state.runtimeSnapshot.lastEngineSessionSummary ?: "none"}",
                                 "Last health check: ${formatTimestamp(state.runtimeSnapshot.lastEngineHealthAtEpochMs)}",
                                 "Health summary: ${state.runtimeSnapshot.lastEngineHealthSummary ?: "none"}",
+                                "Recent xray logs: ${state.runtimeSnapshot.recentXrayLogLines.ifEmpty { listOf("none") }.joinToString(" | ")}",
+                                "Recent native events: ${state.runtimeSnapshot.recentNativeEvents.ifEmpty { listOf("none") }.joinToString(" | ")}",
                             ),
                         )
                     }
@@ -330,10 +344,8 @@ private fun TunguskaApp(
                                 add("Subscription error: ${state.subscriptionState.error ?: "none"}")
                             },
                             actions = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { showFrozenSecondarySurface = false }) {
-                                        Text("Hide Surface")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Hide Surface", onClick = { showFrozenSecondarySurface = false }, primary = false)
                                 }
                                 OutlinedTextField(
                                     value = state.subscriptionState.urlDraft,
@@ -362,46 +374,27 @@ private fun TunguskaApp(
                                     modifier = Modifier.fillMaxWidth(),
                                     minLines = 2,
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.saveSubscriptionSource() }) {
-                                        Text("Save Source")
-                                    }
-                                    Button(onClick = { viewModel.refreshSubscriptionNow() }) {
-                                        Text("Update Now")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Save Source", onClick = { viewModel.saveSubscriptionSource() })
+                                    ActionButton(text = "Update Now", onClick = { viewModel.refreshSubscriptionNow() })
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.MANUAL) }) {
-                                        Text("Manual")
-                                    }
-                                    Button(onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.EVERY_6_HOURS) }) {
-                                        Text("Every 6h")
-                                    }
-                                    Button(onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.EVERY_24_HOURS) }) {
-                                        Text("Every 24h")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Manual", onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.MANUAL) }, primary = false)
+                                    ActionButton(text = "Every 6h", onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.EVERY_6_HOURS) }, primary = false)
+                                    ActionButton(text = "Every 24h", onClick = { viewModel.setSubscriptionScheduleMode(SubscriptionScheduleMode.EVERY_24_HOURS) }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.setSubscriptionUpdateAlertsEnabled(true) }) {
-                                        Text("Updates On")
-                                    }
-                                    Button(onClick = { viewModel.setSubscriptionUpdateAlertsEnabled(false) }) {
-                                        Text("Updates Off")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Updates On", onClick = { viewModel.setSubscriptionUpdateAlertsEnabled(true) }, primary = false)
+                                    ActionButton(text = "Updates Off", onClick = { viewModel.setSubscriptionUpdateAlertsEnabled(false) }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.setSubscriptionFailureAlertThreshold(1) }) {
-                                        Text("Fail x1")
-                                    }
-                                    Button(onClick = { viewModel.setSubscriptionFailureAlertThreshold(2) }) {
-                                        Text("Fail x2")
-                                    }
-                                    Button(onClick = { viewModel.setSubscriptionFailureAlertThreshold(3) }) {
-                                        Text("Fail x3")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Fail x1", onClick = { viewModel.setSubscriptionFailureAlertThreshold(1) }, primary = false)
+                                    ActionButton(text = "Fail x2", onClick = { viewModel.setSubscriptionFailureAlertThreshold(2) }, primary = false)
+                                    ActionButton(text = "Fail x3", onClick = { viewModel.setSubscriptionFailureAlertThreshold(3) }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
+                                ActionGroup {
+                                    ActionButton(
+                                        text = if (state.subscriptionState.notificationsEnabled) "Alert Settings" else "Enable Alerts",
                                         onClick = {
                                             if (!state.subscriptionState.notificationsEnabled &&
                                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -415,61 +408,46 @@ private fun TunguskaApp(
                                                 )
                                             }
                                         },
-                                    ) {
-                                        Text(if (state.subscriptionState.notificationsEnabled) "Alert Settings" else "Enable Alerts")
-                                    }
-                                    Button(onClick = { viewModel.refreshSubscriptionNotificationStatus() }) {
-                                        Text("Refresh Alerts")
-                                    }
+                                        primary = false,
+                                    )
+                                    ActionButton(text = "Refresh Alerts", onClick = { viewModel.refreshSubscriptionNotificationStatus() }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.trustObservedSubscriptionIdentity() }) {
-                                        Text("Trust Observed")
-                                    }
-                                    Button(onClick = { viewModel.clearPinnedSubscriptionIdentity() }) {
-                                        Text("Clear Pin")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Trust Observed", onClick = { viewModel.trustObservedSubscriptionIdentity() }, primary = false)
+                                    ActionButton(text = "Clear Pin", onClick = { viewModel.clearPinnedSubscriptionIdentity() }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.trustObservedSubscriptionPublisherIdentity() }) {
-                                        Text(if (state.subscriptionState.publisherRolloverReady) "Add Signer" else "Trust Signer")
-                                    }
-                                    Button(onClick = { viewModel.clearPinnedSubscriptionPublisherIdentity() }) {
-                                        Text("Clear Signer")
-                                    }
+                                ActionGroup {
+                                    ActionButton(
+                                        text = if (state.subscriptionState.publisherRolloverReady) "Add Signer" else "Trust Signer",
+                                        onClick = { viewModel.trustObservedSubscriptionPublisherIdentity() },
+                                        primary = false,
+                                    )
+                                    ActionButton(text = "Clear Signer", onClick = { viewModel.clearPinnedSubscriptionPublisherIdentity() }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
+                                ActionGroup {
+                                    ActionButton(
+                                        text = "Prev Candidate",
                                         onClick = { viewModel.selectPreviousSubscriptionCandidate() },
                                         enabled = state.subscriptionState.pendingUpdateProfileCount > 1,
-                                    ) {
-                                        Text("Prev Candidate")
-                                    }
-                                    Button(
+                                        primary = false,
+                                    )
+                                    ActionButton(
+                                        text = "Next Candidate",
                                         onClick = { viewModel.selectNextSubscriptionCandidate() },
                                         enabled = state.subscriptionState.pendingUpdateProfileCount > 1,
-                                    ) {
-                                        Text("Next Candidate")
-                                    }
+                                        primary = false,
+                                    )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.applyPendingSubscriptionUpdate() }) {
-                                        Text("Apply Update")
-                                    }
-                                    Button(onClick = { viewModel.clearSubscriptionInbox() }) {
-                                        Text("Clear Inbox")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Apply Update", onClick = { viewModel.applyPendingSubscriptionUpdate() }, primary = false)
+                                    ActionButton(text = "Clear Inbox", onClick = { viewModel.clearSubscriptionInbox() }, primary = false)
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { viewModel.clearSubscriptionAlertLedger() }) {
-                                        Text("Clear Alert Ledger")
-                                    }
+                                ActionGroup {
+                                    ActionButton(text = "Clear Alert Ledger", onClick = { viewModel.clearSubscriptionAlertLedger() }, primary = false)
                                 }
                                 if (state.subscriptionState.notificationAttention != null) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { viewModel.dismissSubscriptionNotificationAttention() }) {
-                                            Text("Dismiss Alert")
-                                        }
+                                    ActionGroup {
+                                        ActionButton(text = "Dismiss Alert", onClick = { viewModel.dismissSubscriptionNotificationAttention() }, primary = false)
                                     }
                                 }
                             },
@@ -495,6 +473,7 @@ private fun ConnectionOverviewCard(
     onStop: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val compactLayout = rememberCompactLayout()
     val containerColor = when (state.runtimeSnapshot.phase) {
         VpnRuntimePhase.RUNNING -> Color(0xFFDDEBDD)
         VpnRuntimePhase.FAIL_CLOSED -> Color(0xFFF4D8D2)
@@ -502,11 +481,12 @@ private fun ConnectionOverviewCard(
         else -> Color(0xFFF3E9D8)
     }
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor),
         shape = RoundedCornerShape(24.dp),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(if (compactLayout) 16.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
@@ -519,6 +499,25 @@ private fun ConnectionOverviewCard(
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFF22332C),
             )
+            ActionGroup {
+                ActionButton(
+                    text = "Connect",
+                    onClick = onConnect,
+                    modifier = Modifier.testTag(UiTags.CONNECT_BUTTON),
+                )
+                ActionButton(
+                    text = "Stop",
+                    onClick = onStop,
+                    modifier = Modifier.testTag(UiTags.STOP_BUTTON),
+                    primary = false,
+                )
+                ActionButton(
+                    text = "Refresh",
+                    onClick = onRefresh,
+                    modifier = Modifier.testTag(UiTags.REFRESH_RUNTIME_BUTTON),
+                    primary = false,
+                )
+            }
             TwoColumnMetricRow(
                 leftTitle = "Profile",
                 leftValue = state.profile.name,
@@ -536,26 +535,6 @@ private fun ConnectionOverviewCard(
                     "Last error: ${state.controlError ?: "none"}",
                 ),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onConnect,
-                    modifier = Modifier.testTag(UiTags.CONNECT_BUTTON),
-                ) {
-                    Text("Connect")
-                }
-                Button(
-                    onClick = onStop,
-                    modifier = Modifier.testTag(UiTags.STOP_BUTTON),
-                ) {
-                    Text("Stop")
-                }
-                Button(
-                    onClick = onRefresh,
-                    modifier = Modifier.testTag(UiTags.REFRESH_RUNTIME_BUTTON),
-                ) {
-                    Text("Refresh")
-                }
-            }
         }
     }
 }
@@ -567,13 +546,19 @@ private fun HeroCard(
     chips: List<String>,
 ) {
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF163233)),
         shape = RoundedCornerShape(28.dp),
     ) {
         Column(
-            modifier = Modifier.padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(if (rememberCompactLayout()) 18.dp else 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            Text(
+                text = "Secure-first Android VPN",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFFE8C78F),
+            )
             Text(
                 text = title,
                 style = MaterialTheme.typography.displaySmall,
@@ -583,7 +568,20 @@ private fun HeroCard(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFFDCE8E4),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
             )
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF214345),
+                contentColor = Color(0xFFF7EED6),
+            ) {
+                Text(
+                    text = "Import -> preview -> connect -> verify traffic -> stop",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -663,17 +661,33 @@ private fun TwoColumnMetricRow(
     rightTitle: String,
     rightValue: String,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        MetricCard(
-            title = leftTitle,
-            value = leftValue,
-            modifier = Modifier.weight(1f),
-        )
-        MetricCard(
-            title = rightTitle,
-            value = rightValue,
-            modifier = Modifier.weight(1f),
-        )
+    val compactLayout = rememberCompactLayout()
+    if (compactLayout) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricCard(
+                title = leftTitle,
+                value = leftValue,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            MetricCard(
+                title = rightTitle,
+                value = rightValue,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricCard(
+                title = leftTitle,
+                value = leftValue,
+                modifier = Modifier.weight(1f),
+            )
+            MetricCard(
+                title = rightTitle,
+                value = rightValue,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
@@ -706,12 +720,13 @@ private fun DetailCard(
     actions: @Composable (() -> Unit)? = null,
 ) {
     Card(
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF9F5)),
         shape = RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5DED1)),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(if (rememberCompactLayout()) 16.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(title, style = MaterialTheme.typography.titleLarge)
@@ -731,11 +746,13 @@ private fun PreviewCard(
     onPortChange: (String) -> Unit,
 ) {
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFF7E7D5)),
         shape = RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE6C7AC)),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(if (rememberCompactLayout()) 16.dp else 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Routing Preview", style = MaterialTheme.typography.titleLarge)
@@ -772,6 +789,56 @@ private fun PreviewCard(
         }
     }
 }
+
+@Composable
+private fun ActionGroup(
+    content: @Composable () -> Unit,
+) {
+    if (rememberCompactLayout()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            content()
+        }
+    } else {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    primary: Boolean = true,
+) {
+    val compactLayout = rememberCompactLayout()
+    val buttonModifier = if (compactLayout) modifier.fillMaxWidth() else modifier
+    if (primary) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = buttonModifier,
+        ) {
+            Text(text)
+        }
+    } else {
+        TextButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = buttonModifier,
+        ) {
+            Text(text)
+        }
+    }
+}
+
+@Composable
+private fun rememberCompactLayout(): Boolean = LocalConfiguration.current.screenWidthDp <= 320
 
 private object TunguskaChrome {
     val colorScheme = androidx.compose.material3.lightColorScheme(

@@ -118,7 +118,7 @@ The product does not currently target:
 - total VPN invisibility
 - interface-name randomization such as hiding `tun0`
 - a fully hidden subscription-centric product surface
-- production store-signing or Play distribution in `v0.1.0`
+- production store-signing or Play distribution in `v0.2.1`
 
 ## Frozen Secondary Surface
 
@@ -138,7 +138,8 @@ The release line is considered materially correct when:
 - import by camera QR works
 - import by image QR works
 - VPN permission flow works
-- runtime reaches `RUNNING`
+- Chrome or another routed client shows a different public IP under VPN than without VPN
+- stopping the VPN returns the client to the direct IP
 - split routing behaves as configured
 - listener self-audit and watchdog fail closed on violation
 - GitHub Actions build installable APK artifacts and GitHub Releases publish versioned APKs
