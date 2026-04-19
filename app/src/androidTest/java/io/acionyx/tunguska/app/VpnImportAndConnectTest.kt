@@ -15,6 +15,7 @@ class VpnImportAndConnectTest {
 
     @Test
     fun import_and_connect_from_share_link() {
+        harness.ensureRuntimeIdle()
         harness.launchTunguska()
         harness.importShareLinkFromArgsOrDefault()
         harness.connectAndWait()

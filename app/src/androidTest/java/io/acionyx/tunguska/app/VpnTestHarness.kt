@@ -24,6 +24,8 @@ import io.acionyx.tunguska.netpolicy.RoutePreviewRequest
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.URI
 import java.net.URLDecoder
 import java.util.concurrent.CountDownLatch
@@ -46,6 +48,10 @@ internal class VpnTestHarness(
     private val automationOrchestrator = RuntimeAutomationOrchestrator(appContext)
     private val plugin = SingboxEnginePlugin()
     private val routePreviewEngine = RoutePreviewEngine()
+    private val diagnosticsDirectory = File(
+        appContext.filesDir,
+        DIAGNOSTICS_DIRECTORY_NAME,
+    ).apply { mkdirs() }
 
     fun importShareLinkFromArgsOrDefault() {
         importPayload(shareLinkFromArgs())
@@ -225,7 +231,6 @@ internal class VpnTestHarness(
     }
 
     fun launchTunguska() {
-        device.executeShellCommand("cmd package enable $TUNGUSKA_PACKAGE")
         val launchIntent = checkNotNull(
             appContext.packageManager.getLaunchIntentForPackage(TUNGUSKA_PACKAGE),
         ) {
@@ -266,25 +271,24 @@ internal class VpnTestHarness(
     }
 
     fun captureDiagnostics(label: String) {
-        device.executeShellCommand("mkdir -p $REMOTE_DIAGNOSTICS_DIRECTORY")
-        device.executeShellCommand("uiautomator dump $REMOTE_DIAGNOSTICS_DIRECTORY/$label-window.xml")
-        device.executeShellCommand("screencap -p $REMOTE_DIAGNOSTICS_DIRECTORY/$label-screen.png")
-        shellRedirect(
+        writeWindowHierarchy(label)
+        writeScreenshot(label)
+        writeCommandOutput(
+            fileName = "$label-logcat.txt",
             command = "logcat -d -v threadtime -s " +
                 "TunguskaVpnService:I XrayTun2Socks:I TunguskaVpnNative:I RuntimeAutomation:I Tunguska:I chromium:I *:S",
-            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-logcat.txt",
         )
-        shellRedirect(
+        writeCommandOutput(
+            fileName = "$label-connectivity.txt",
             command = "dumpsys connectivity",
-            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-connectivity.txt",
         )
-        shellRedirect(
+        writeCommandOutput(
+            fileName = "$label-vpn.txt",
             command = "dumpsys vpn",
-            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-vpn.txt",
         )
-        shellRedirect(
+        writeCommandOutput(
+            fileName = "$label-services.txt",
             command = "dumpsys activity services io.acionyx.tunguska",
-            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-services.txt",
         )
         exportRedactedDiagnosticBundle(label)
     }
@@ -480,7 +484,7 @@ internal class VpnTestHarness(
                 IP_REGEX.find(multilineMatch.text)?.let { return ProbeResult.Success(it.value) }
             }
 
-            val dump = device.executeShellCommand("uiautomator dump /dev/tty")
+            val dump = dumpWindowHierarchy()
             IP_REGEX.findAll(dump).lastOrNull()?.let { return ProbeResult.Success(it.value) }
             detectProbeFailure(dump)?.let {
                 captureDiagnostics("${label}_probe_error")
@@ -539,21 +543,35 @@ internal class VpnTestHarness(
             routePreview = preview,
             previewOutcome = previewOutcome,
         )
-        device.executeShellCommand("echo ${artifact.path} > $REMOTE_DIAGNOSTICS_DIRECTORY/$label-export-path.txt")
+        diagnosticsDirectory.resolve("$label-export-path.txt").writeText(artifact.path)
     }
 
     private fun captureStep(label: String) {
-        device.executeShellCommand("mkdir -p $REMOTE_DIAGNOSTICS_DIRECTORY")
-        device.executeShellCommand("uiautomator dump $REMOTE_DIAGNOSTICS_DIRECTORY/$label-window.xml")
-        device.executeShellCommand("screencap -p $REMOTE_DIAGNOSTICS_DIRECTORY/$label-screen.png")
+        writeWindowHierarchy(label)
+        writeScreenshot(label)
     }
 
-    private fun shellRedirect(command: String, destination: String) {
-        val escapedCommand = command.replace("'", "'\\''")
-        val escapedDestination = destination.replace("'", "'\\''")
-        device.executeShellCommand(
-            "sh -c '$escapedCommand > $escapedDestination'",
-        )
+    private fun dumpWindowHierarchy(): String {
+        val output = ByteArrayOutputStream()
+        device.dumpWindowHierarchy(output)
+        return output.toString(Charsets.UTF_8.name())
+    }
+
+    private fun writeWindowHierarchy(label: String) {
+        diagnosticsDirectory.resolve("$label-window.xml").outputStream().use { output ->
+            device.dumpWindowHierarchy(output)
+        }
+    }
+
+    private fun writeScreenshot(label: String) {
+        val target = diagnosticsDirectory.resolve("$label-screen.png")
+        check(device.takeScreenshot(target)) {
+            "Failed to capture screenshot to ${target.absolutePath}"
+        }
+    }
+
+    private fun writeCommandOutput(fileName: String, command: String) {
+        diagnosticsDirectory.resolve(fileName).writeText(device.executeShellCommand(command))
     }
 
     private fun detectProbeFailure(dump: String): String? {
@@ -610,7 +628,7 @@ internal class VpnTestHarness(
         private const val CHROME_COMPONENT = "com.android.chrome/com.google.android.apps.chrome.Main"
         private const val TRAFFIC_PROBE_COMPONENT =
             "io.acionyx.tunguska.trafficprobe/io.acionyx.tunguska.trafficprobe.ProbeActivity"
-        private const val REMOTE_DIAGNOSTICS_DIRECTORY = "/sdcard/Download/tunguska-smoke"
+        private const val DIAGNOSTICS_DIRECTORY_NAME = "tunguska-smoke"
         private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
         private const val PROBE_URL_PRIMARY = "https://api.ipify.org/"
         private const val PROBE_URL_FALLBACK = "https://ifconfig.me/ip"

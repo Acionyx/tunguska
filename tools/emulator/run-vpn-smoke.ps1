@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
-$diagnosticsRemotePath = "/sdcard/Download/tunguska-smoke"
+$diagnosticsRemotePath = "files/tunguska-smoke"
 $androidHome = "C:\Users\vladi\AppData\Local\Android\Sdk"
 $adb = "$androidHome\platform-tools\adb.exe"
 . "$PSScriptRoot\UiAutomatorTools.ps1"
@@ -46,6 +46,50 @@ function Assert-LastExitCode {
     }
 }
 
+function Invoke-CheckedInstrumentation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Step
+    )
+
+    $stdoutPath = Join-Path $env:TEMP ("tunguska-instrument-{0}.stdout.txt" -f ([guid]::NewGuid().ToString("N")))
+    $stderrPath = Join-Path $env:TEMP ("tunguska-instrument-{0}.stderr.txt" -f ([guid]::NewGuid().ToString("N")))
+    try {
+        $process = Start-Process `
+            -FilePath $adb `
+            -ArgumentList $Arguments `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+        $instrumentOutput = @()
+        if (Test-Path $stdoutPath) {
+            $instrumentOutput += Get-Content $stdoutPath
+        }
+        if (Test-Path $stderrPath) {
+            $instrumentOutput += Get-Content $stderrPath
+        }
+        $instrumentOutput | ForEach-Object { Write-Host $_ }
+        if ($process.ExitCode -ne 0) {
+            throw "$Step failed with exit code $($process.ExitCode)."
+        }
+        $instrumentText = ($instrumentOutput | Out-String)
+        if (
+            $instrumentText -match "Process crashed" -or
+            $instrumentText -match "FAILURES!!!" -or
+            $instrumentText -match "INSTRUMENTATION_FAILED" -or
+            $instrumentText -match "shortMsg="
+        ) {
+            throw "$Step reported a runtime failure despite exit code 0."
+        }
+    } finally {
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Push-Location $root
 try {
     Write-Host "Phase: start emulator"
@@ -60,8 +104,6 @@ try {
     & "tools\emulator\ensure-chrome.ps1"
     Assert-LastExitCode "Ensure Chrome"
     Assert-EmulatorOnline
-    Invoke-Adb -Arguments @("shell", "rm", "-rf", $diagnosticsRemotePath) | Out-Null
-    Invoke-Adb -Arguments @("shell", "mkdir", "-p", $diagnosticsRemotePath) | Out-Null
 
     if (-not $SkipInstall) {
         Assert-EmulatorOnline
@@ -78,6 +120,10 @@ try {
             "-Dkotlin.incremental=false"
         Assert-LastExitCode "Tunguska smoke install"
     }
+
+    Invoke-Adb -Arguments @("shell", "run-as", "io.acionyx.tunguska", "rm", "-rf", $diagnosticsRemotePath) | Out-Null
+    Invoke-Adb -Arguments @("shell", "run-as", "io.acionyx.tunguska", "mkdir", "-p", $diagnosticsRemotePath) | Out-Null
+    Invoke-Adb -Arguments @("shell", "cmd", "package", "enable", "io.acionyx.tunguska") | Out-Null
 
     if (-not $ShareLink -and $env:TUNGUSKA_REAL_SHARE_LINK) {
         $ShareLink = $env:TUNGUSKA_REAL_SHARE_LINK
@@ -103,8 +149,7 @@ try {
             $instrumentArgs += @("-e", "expected_phase", $ExpectedPhase)
         }
         $instrumentArgs += @("io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner")
-        & $adb @instrumentArgs
-        Assert-LastExitCode "Instrumentation $testClass"
+        Invoke-CheckedInstrumentation -Step "Instrumentation $testClass" -Arguments $instrumentArgs
         Assert-EmulatorOnline
     }
     & "tools\emulator\pull-diagnostics.ps1"
