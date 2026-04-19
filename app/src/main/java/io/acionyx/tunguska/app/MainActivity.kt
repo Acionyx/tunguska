@@ -211,7 +211,7 @@ private fun TunguskaApp(
                     DetailCard(
                         title = "Protection Summary",
                         body = listOf(
-                            "Runtime lane: xray+tun2socks is the active MVP path; libbox stays available only for comparison.",
+                            "Runtime lane: xray+tun2socks is the active MVP path.",
                             "Local bridge: loopback-only, authenticated, per-session random port and credentials, and no management API surface.",
                             "Split routing: ${splitTunnelDetail(state.tunnelPlan.splitTunnelMode)}.",
                             "Listener audit: ${state.runtimeSnapshot.auditStatus} ${state.runtimeSnapshot.lastAuditSummary ?: ""}".trim(),
@@ -261,7 +261,7 @@ private fun TunguskaApp(
                         body = buildList {
                             add("Hidden by default so the first screen stays on import, connect, status, and diagnostics.")
                             add("Current mode: ${if (showAdvancedDiagnostics) "expanded" else "collapsed"}")
-                            add("Primary runtime: xray+tun2socks. Comparison runtime: libbox.")
+                            add("Primary runtime: xray+tun2socks.")
                         },
                         actions = {
                             ActionGroup {

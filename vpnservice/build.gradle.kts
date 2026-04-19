@@ -9,6 +9,9 @@ android {
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -45,7 +48,6 @@ dependencies {
     implementation(projects.security.audit)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(files("../third_party/libbox/libbox.aar"))
 
     testImplementation(kotlin("test"))
     testImplementation(libs.junit4)

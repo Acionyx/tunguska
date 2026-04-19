@@ -71,10 +71,9 @@ class RuntimeSessionControllerTest {
         val workspaceRoot = Files.createTempDirectory("tunguska-runtime").toFile()
         val controller = RuntimeSessionController(
             engineHostRegistry = EmbeddedEngineHostRegistry(
-                hosts = listOf(MissingSingboxEmbeddedHost(clock = { 2222L })),
+                hosts = listOf(UnavailableEmbeddedEngineHost(clock = { 2222L })),
                 strategyPolicy = EmbeddedRuntimeStrategyPolicy(
-                    activeStrategy = EmbeddedRuntimeStrategyId.LIBBOX,
-                    fallbackStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+                    activeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
                 ),
                 clock = { 2222L },
             ),
@@ -95,7 +94,7 @@ class RuntimeSessionControllerTest {
             sessionLabel = "Tunguska abc123",
         )
 
-        assertTrue(outcome.failureReason?.contains("not linked") == true)
+        assertTrue(outcome.failureReason?.contains("unavailable") == true)
         assertNull(outcome.activeSession)
         assertFalse(ActiveRuntimeSessionStore.isActive())
         assertEquals(TunnelBootstrapStatus.NOT_ATTEMPTED, VpnRuntimeStore.snapshot().bootstrapStatus)

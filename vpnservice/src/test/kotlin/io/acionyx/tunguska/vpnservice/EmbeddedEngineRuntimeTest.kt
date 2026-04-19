@@ -39,10 +39,9 @@ class EmbeddedEngineRuntimeTest {
             clock = { 1234L },
         )
         val registry = EmbeddedEngineHostRegistry(
-            hosts = listOf(MissingSingboxEmbeddedHost(clock = { 5678L })),
+            hosts = listOf(UnavailableEmbeddedEngineHost(clock = { 5678L })),
             strategyPolicy = EmbeddedRuntimeStrategyPolicy(
-                activeStrategy = EmbeddedRuntimeStrategyId.LIBBOX,
-                fallbackStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+                activeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
             ),
             clock = { 5678L },
         )
@@ -55,17 +54,16 @@ class EmbeddedEngineRuntimeTest {
 
         assertEquals(EmbeddedEngineHostStatus.UNAVAILABLE, result.result.status)
         assertEquals(5678L, result.result.preparedAtEpochMs)
-        assertTrue(result.result.summary.contains("not linked"))
+        assertTrue(result.result.summary.contains("unavailable"))
         assertTrue(File(requireNotNull(result.result.workspacePath)).exists())
         assertEquals(null, result.session)
     }
 
     @Test
-    fun `registry exposes xray active strategy and libbox fallback lane`() {
+    fun `registry exposes xray as the active strategy`() {
         val registry = EmbeddedEngineHostRegistry()
 
         assertEquals(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS, registry.activeStrategyId())
-        assertEquals(EmbeddedRuntimeStrategyId.LIBBOX, registry.fallbackStrategyId())
     }
 
     @Test

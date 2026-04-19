@@ -4,16 +4,15 @@ This document defines the real-device validation matrix for Tunguska `v0.2.x`.
 
 ## Current Status
 
-- Release exists: `v0.2.1`
-- Headed emulator harness covers import, connect, stop, automation control-path, split-routing helper flows, and artifact capture
-- Headed emulator joint Tunguska + Anubis orchestration has been proven end-to-end with a real VLESS + REALITY share link passed through CLI or environment, not committed into the repo
+- Release exists: `v0.2.3`
+- Headed emulator harness covers import, UI flow, stop, automation control-path, split-routing helper flows, and artifact capture
+- Headed emulator joint Tunguska + Anubis orchestration has been proven for the control path with a real VLESS + REALITY share link passed through CLI or environment, not committed into the repo
 - Functional real-device traffic and public-IP change have been confirmed
 - Full detector-backed validation on a physical device is still pending
 
 ## Active Runtime Under Test
 
 - active runtime: `xray+tun2socks`
-- comparison runtime: `libbox`
 - product success metric: `import or scan -> preview -> confirm -> connect -> Chrome IP changes -> traffic passes -> stop -> direct IP returns`
 
 ## Blocking Findings
@@ -85,6 +84,5 @@ If external orchestration is in scope, validate it separately after the standalo
 
 - The product does not claim VPN invisibility.
 - The product does claim that bypass-grade local attack surfaces are the real blocker.
-- The headed emulator is useful for UI and control-path debugging, but the authoritative IP proof remains a physical-device check.
+- The headed emulator is useful for UI and control-path debugging, but the authoritative IP proof for the current arm64-only shipping runtime remains a physical-device check.
 - If `xray+tun2socks` passes this matrix, it remains the primary runtime for the next release line.
-- If `libbox` later proves materially better on the same matrix, it can replace the active lane without changing profile storage or Binder contracts.

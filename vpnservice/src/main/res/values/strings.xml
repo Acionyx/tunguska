@@ -1,6 +1,6 @@
 <resources>
     <string name="vpn_notification_channel_name">Tunguska VPN runtime</string>
     <string name="vpn_runtime_title">Tunnel runtime staged</string>
-    <string name="vpn_runtime_message">Config %1$s staged; the active runtime lane is the libbox validation sprint.</string>
+    <string name="vpn_runtime_message">Config %1$s staged; the active runtime lane is xray+tun2socks.</string>
     <string name="vpn_runtime_fail_closed_reason">Tunnel interface for %1$s was established in bootstrap-only mode, but the runtime still failed closed before an active session was retained.</string>
 </resources>

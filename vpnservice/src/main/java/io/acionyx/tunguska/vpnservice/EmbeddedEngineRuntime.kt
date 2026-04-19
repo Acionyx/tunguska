@@ -17,13 +17,11 @@ data class EmbeddedRuntimeDependencies(
 )
 
 enum class EmbeddedRuntimeStrategyId {
-    LIBBOX,
     XRAY_TUN2SOCKS,
 }
 
 data class EmbeddedRuntimeStrategyPolicy(
     val activeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
-    val fallbackStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.LIBBOX,
 )
 
 enum class EmbeddedEngineHostStatus {
@@ -99,14 +97,11 @@ interface EmbeddedEngineHost {
 class EmbeddedEngineHostRegistry(
     private val hosts: List<EmbeddedEngineHost> = listOf(
         XrayTun2SocksEmbeddedHost(),
-        LibboxEmbeddedHost(),
     ),
     private val strategyPolicy: EmbeddedRuntimeStrategyPolicy = EmbeddedRuntimeStrategyPolicy(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     fun activeStrategyId(): EmbeddedRuntimeStrategyId = strategyPolicy.activeStrategy
-
-    fun fallbackStrategyId(): EmbeddedRuntimeStrategyId = strategyPolicy.fallbackStrategy
 
     fun prepare(
         request: StagedRuntimeRequest,
@@ -135,7 +130,6 @@ class EmbeddedEngineHostRegistry(
                     summary = buildString {
                         append("No embedded engine host is registered for '${request.compiledConfig.engineId}' ")
                         append("with active strategy ${strategyPolicy.activeStrategy}. ")
-                        append("Fallback strategy is ${strategyPolicy.fallbackStrategy}. ")
                         append("Available strategies: $availableStrategies.")
                     },
                     preparedAtEpochMs = clock(),
@@ -214,11 +208,11 @@ class EngineSessionWorkspaceFactory(
     }
 }
 
-class MissingSingboxEmbeddedHost(
+class UnavailableEmbeddedEngineHost(
+    override val engineId: String = "singbox",
     private val clock: () -> Long = System::currentTimeMillis,
 ) : EmbeddedEngineHost {
-    override val engineId: String = "singbox"
-    override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.LIBBOX
+    override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS
 
     override fun prepare(
         workspace: EngineSessionWorkspace,
@@ -227,7 +221,7 @@ class MissingSingboxEmbeddedHost(
     ): EmbeddedEngineHostPreparation = EmbeddedEngineHostPreparation(
         result = EmbeddedEngineHostResult(
             status = EmbeddedEngineHostStatus.UNAVAILABLE,
-            summary = "Embedded sing-box host is not linked yet; prepared a redacted session manifest for ${request.compiledConfig.configHash.take(12)}.",
+            summary = "Embedded engine host is unavailable; prepared a redacted session manifest for ${request.compiledConfig.configHash.take(12)}.",
             preparedAtEpochMs = clock(),
             workspacePath = workspace.rootDir.absolutePath,
         ),

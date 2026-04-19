@@ -1,6 +1,6 @@
 param(
     [string]$DeviceLabel = "unassigned-device",
-    [string]$RuntimeStrategy = "libbox",
+    [string]$RuntimeStrategy = "xray+tun2socks",
     [string]$OutputDir = (Join-Path (Join-Path $PSScriptRoot "..\..") "build\mvp-validation")
 )
 
@@ -55,7 +55,7 @@ $content = @"
 
 - Attach the redacted diagnostic bundle path here.
 - Record exact detector screenshots or logs here.
-- If libbox fails on objective runtime criteria, open the xray+tun2socks fallback lane.
+- Record whether the active xray+tun2socks lane matches the expected routing and detector behavior.
 "@
 
 Set-Content -Path $path -Value $content -Encoding UTF8

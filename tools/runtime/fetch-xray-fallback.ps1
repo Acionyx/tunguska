@@ -1,5 +1,5 @@
 param(
-    [string[]]$Abis = @("x86_64", "arm64-v8a")
+    [string[]]$Abis = @("arm64-v8a")
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,10 +16,7 @@ New-Item -ItemType Directory -Force -Path $xrayAssetsRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 
 function Get-XrayAssetName([string]$abi) {
-    # Keep the arm64 device lane on the Linux build that carries traffic on real
-    # phones, but prefer the Android x86_64 build for emulator validation.
     switch ($abi) {
-        "x86_64" { return "Xray-android-amd64.zip" }
         "arm64-v8a" { return "Xray-linux-arm64-v8a.zip" }
         default { throw "Unsupported ABI for xray: $abi" }
     }
@@ -27,7 +24,6 @@ function Get-XrayAssetName([string]$abi) {
 
 function Get-Tun2SocksAssetName([string]$abi) {
     switch ($abi) {
-        "x86_64" { return "tun2socks-linux-amd64.zip" }
         "arm64-v8a" { return "tun2socks-linux-arm64.zip" }
         default { throw "Unsupported ABI for tun2socks: $abi" }
     }
@@ -35,7 +31,6 @@ function Get-Tun2SocksAssetName([string]$abi) {
 
 function Get-ClangPath([string]$abi) {
     switch ($abi) {
-        "x86_64" { return Join-Path $ndkBin "x86_64-linux-android26-clang++.cmd" }
         "arm64-v8a" { return Join-Path $ndkBin "aarch64-linux-android26-clang++.cmd" }
         default { throw "Unsupported ABI for vpnhelper: $abi" }
     }
@@ -60,18 +55,16 @@ foreach ($abi in $Abis) {
     }
     Copy-Item -Force $xrayBinary.FullName (Join-Path $abiDir "libxray.so")
 
-    if ($abi -eq "x86_64") {
-        $geoIpDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geoip.dat" } | Select-Object -First 1
-        $geoSiteDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geosite.dat" } | Select-Object -First 1
-        if (-not $geoIpDat) {
-            throw "Unable to locate geoip.dat in the Xray archive"
-        }
-        if (-not $geoSiteDat) {
-            throw "Unable to locate geosite.dat in the Xray archive"
-        }
-        Copy-Item -Force $geoIpDat.FullName (Join-Path $xrayAssetsRoot "geoip.dat")
-        Copy-Item -Force $geoSiteDat.FullName (Join-Path $xrayAssetsRoot "geosite.dat")
+    $geoIpDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geoip.dat" } | Select-Object -First 1
+    $geoSiteDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geosite.dat" } | Select-Object -First 1
+    if (-not $geoIpDat) {
+        throw "Unable to locate geoip.dat in the Xray archive"
     }
+    if (-not $geoSiteDat) {
+        throw "Unable to locate geosite.dat in the Xray archive"
+    }
+    Copy-Item -Force $geoIpDat.FullName (Join-Path $xrayAssetsRoot "geoip.dat")
+    Copy-Item -Force $geoSiteDat.FullName (Join-Path $xrayAssetsRoot "geosite.dat")
 
     Invoke-WebRequest -Uri "https://github.com/xjasonlyu/tun2socks/releases/latest/download/$tunAsset" -OutFile $tunZip
     Expand-Archive -Path $tunZip -DestinationPath (Join-Path $abiTmp "tun2socks") -Force

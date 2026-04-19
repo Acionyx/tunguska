@@ -25,8 +25,7 @@ Tunguska is an Android VPN client for VLESS + REALITY profiles that prioritizes:
 ### Platform
 
 - Android `8.0+`
-- `arm64-v8a` device builds
-- `x86_64` emulator builds
+- `arm64-v8a` shipping builds
 
 ### Connection Model
 
@@ -105,10 +104,6 @@ Required properties:
 - no enabled management API
 - no enabled debug listener
 
-### Secondary runtime lane
-
-`libbox` remains bundled only as a comparison lane. It is not the default release path.
-
 ## Security Requirements
 
 ### Import
@@ -153,7 +148,7 @@ The product does not currently target:
 - total VPN invisibility
 - interface-name randomization such as hiding `tun0`
 - a fully hidden subscription-centric product surface
-- production store-signing or Play distribution in `v0.2.1`
+- production store-signing or Play distribution in `v0.2.3`
 
 ## Frozen Secondary Surface
 

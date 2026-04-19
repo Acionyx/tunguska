@@ -13,12 +13,6 @@
 #ifndef __NR_prlimit64
 #if defined(__aarch64__)
 #define __NR_prlimit64 267
-#elif defined(__arm__)
-#define __NR_prlimit64 370
-#elif defined(__x86_64__)
-#define __NR_prlimit64 302
-#elif defined(__i386__)
-#define __NR_prlimit64 345
 #endif
 #endif
 

@@ -16,7 +16,6 @@ import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.singbox.SingboxEnginePlugin
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionHealthStatus
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionStatus
-import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
@@ -252,14 +251,7 @@ class RuntimeAutomationOrchestrator(
         if (snapshot.engineSessionHealthStatus == EmbeddedEngineSessionHealthStatus.FAILED) {
             return false
         }
-        return when (snapshot.activeStrategy) {
-            EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> {
-                snapshot.bridgePort != null
-            }
-            null,
-            EmbeddedRuntimeStrategyId.LIBBOX,
-            -> true
-        }
+        return snapshot.bridgePort != null
     }
 
     private companion object {
