@@ -84,6 +84,8 @@ try {
 
     Assert-EmulatorOnline
     Write-Host "Phase: prepare Tunguska automation fixture"
+    & $adb shell am force-stop sgnv.anubis.app
+    & $adb shell cmd package enable io.acionyx.tunguska | Out-Null
     & $adb shell am instrument -w -r `
         -e class io.acionyx.tunguska.app.PrepareAutomationFixtureTest `
         -e profile_share_link_hex $shareLinkHex `
