@@ -22,6 +22,21 @@ class ListenerAuditTest {
     }
 
     @Test
+    fun `udp parser extracts bound sockets`() {
+        val raw = """
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops
+           0: 0100007F:1F90 00000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 12345 2 0000000000000000 0
+        """.trimIndent()
+
+        val sockets = ProcNetUdpParser.parse(protocol = "udp", raw = raw)
+
+        assertEquals(1, sockets.size)
+        assertEquals("127.0.0.1", sockets.first().address)
+        assertEquals(8080, sockets.first().port)
+        assertEquals(1000, sockets.first().uid)
+    }
+
+    @Test
     fun `audit flags loopback and wildcard listeners`() {
         val findings = ListenerExposureAudit.audit(
             listOf(

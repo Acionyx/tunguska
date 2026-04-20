@@ -68,17 +68,17 @@ object ListenerExposureAudit {
     }
 }
 
-object ProcNetTcpParser {
-    fun parse(protocol: String, raw: String): List<ListeningSocket> = raw
+object ProcNetSocketParser {
+    fun parse(protocol: String, raw: String, listeningStates: Set<String>): List<ListeningSocket> = raw
         .lineSequence()
         .drop(1)
-        .mapNotNull { line -> parseLine(protocol, line) }
+        .mapNotNull { line -> parseLine(protocol, line, listeningStates) }
         .toList()
 
-    private fun parseLine(protocol: String, line: String): ListeningSocket? {
+    private fun parseLine(protocol: String, line: String, listeningStates: Set<String>): ListeningSocket? {
         val parts = line.trim().split(Regex("\\s+"))
         if (parts.size < 8) return null
-        if (parts[3] != LISTEN_STATE) return null
+        if (parts[3] !in listeningStates) return null
 
         val local = parts[1].split(":")
         if (local.size != 2) return null
@@ -101,6 +101,20 @@ object ProcNetTcpParser {
         val words = hex.chunked(8).flatMap { word -> word.chunked(2).reversed() }
         return words.map { it.toInt(16).toByte() }.toByteArray()
     }
+}
 
-    private const val LISTEN_STATE: String = "0A"
+object ProcNetTcpParser {
+    fun parse(protocol: String, raw: String): List<ListeningSocket> = ProcNetSocketParser.parse(
+        protocol = protocol,
+        raw = raw,
+        listeningStates = setOf("0A"),
+    )
+}
+
+object ProcNetUdpParser {
+    fun parse(protocol: String, raw: String): List<ListeningSocket> = ProcNetSocketParser.parse(
+        protocol = protocol,
+        raw = raw,
+        listeningStates = setOf("07"),
+    )
 }

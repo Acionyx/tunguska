@@ -171,9 +171,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         clipboardManager?.setPrimaryClip(
             ClipData.newPlainText("Tunguska Anubis token", token),
         )
+        mainHandler.postDelayed(
+            {
+                val currentText = clipboardManager
+                    ?.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)
+                    ?.coerceToText(getApplication())
+                    ?.toString()
+                if (currentText == token) {
+                    runCatching {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                            clipboardManager.clearPrimaryClip()
+                        } else {
+                            clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""))
+                        }
+                    }
+                }
+            },
+            AUTOMATION_TOKEN_CLIPBOARD_CLEAR_DELAY_MS,
+        )
         uiState = uiState.copy(
             automationState = uiState.automationState.copy(
-                status = "Copied the Anubis automation token to the clipboard.",
+                status = "Copied the Anubis automation token to the clipboard for 10 seconds.",
                 error = null,
             ),
         )
@@ -336,9 +356,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             regionalBypassPromptStore.markDecisionRecorded(storedProfile.profile.id)
             Log.i(
                 TAG,
-                "Confirmed staged import profile='${storedProfile.profile.name}' " +
-                    "server='${storedProfile.profile.outbound.address}:${storedProfile.profile.outbound.port}' " +
-                    "publicKey='${storedProfile.profile.outbound.realityPublicKey}'",
+                "Confirmed staged import profile='${storedProfile.profile.name}' hash='${storedProfile.profileHash.take(12)}'.",
             )
             applyStoredProfile(
                 storedProfile = storedProfile,
@@ -1591,9 +1609,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             Log.i(
                 TAG,
-                "Staging runtime with profile='${uiState.profile.name}' " +
-                    "server='${uiState.profile.outbound.address}:${uiState.profile.outbound.port}' " +
-                    "publicKey='${uiState.profile.outbound.realityPublicKey}'",
+                "Staging runtime with profile='${uiState.profile.name}' config='${uiState.compiledConfig.configHash.take(12)}'.",
             )
             runtimeClient.stageRuntime(
                 plan = uiState.tunnelPlan,
@@ -1692,6 +1708,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 private const val TAG: String = "MainViewModel"
+private const val AUTOMATION_TOKEN_CLIPBOARD_CLEAR_DELAY_MS: Long = 10_000L
 
 private fun maskAutomationToken(token: String): String = when {
     token.length <= 10 -> token

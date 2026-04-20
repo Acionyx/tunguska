@@ -4,6 +4,7 @@ import android.content.Context
 import io.acionyx.tunguska.crypto.CipherBox
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.storage.EncryptedArtifactStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.nio.file.Path
 import kotlinx.serialization.Serializable
@@ -85,9 +86,14 @@ class AutomationIntegrationRepository(
 
     fun validateToken(candidate: String?): Boolean {
         val settings = load()
+        val storedToken = settings.token
         return settings.enabled &&
-            !settings.token.isNullOrBlank() &&
-            settings.token == candidate
+            !storedToken.isNullOrBlank() &&
+            !candidate.isNullOrBlank() &&
+            MessageDigest.isEqual(
+                storedToken.toByteArray(Charsets.UTF_8),
+                candidate.toByteArray(Charsets.UTF_8),
+            )
     }
 
     fun recordResult(

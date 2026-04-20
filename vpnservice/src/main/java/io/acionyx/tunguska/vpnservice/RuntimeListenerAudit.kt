@@ -5,6 +5,7 @@ import io.acionyx.tunguska.security.audit.ListenerAuditPolicy
 import io.acionyx.tunguska.security.audit.ListenerExposureAudit
 import io.acionyx.tunguska.security.audit.ListeningSocket
 import io.acionyx.tunguska.security.audit.ProcNetTcpParser
+import io.acionyx.tunguska.security.audit.ProcNetUdpParser
 import java.io.File
 
 enum class RuntimeAuditStatus {
@@ -35,7 +36,7 @@ class RuntimeListenerAuditor(
     fun auditUid(uid: Int): RuntimeListenerAuditResult {
         val inventories = PROC_NET_SOURCES.mapNotNull { source ->
             procNetReader.read(source.path)?.let { raw ->
-                ProcNetTcpParser.parse(protocol = source.protocol, raw = raw)
+                source.parser(source.protocol, raw)
             }
         }
 
@@ -43,7 +44,7 @@ class RuntimeListenerAuditor(
             return RuntimeListenerAuditResult(
                 status = RuntimeAuditStatus.UNAVAILABLE,
                 findings = emptyList(),
-                summary = "Listener audit unavailable because /proc/net/tcp sources could not be read.",
+                summary = "Listener audit unavailable because /proc/net socket sources could not be read.",
                 auditedAtEpochMs = clock(),
                 socketCount = 0,
             )
@@ -113,12 +114,15 @@ class RuntimeListenerAuditor(
     private data class ProcNetSource(
         val path: String,
         val protocol: String,
+        val parser: (String, String) -> List<ListeningSocket>,
     )
 
     private companion object {
         private val PROC_NET_SOURCES = listOf(
-            ProcNetSource(path = "/proc/net/tcp", protocol = "tcp"),
-            ProcNetSource(path = "/proc/net/tcp6", protocol = "tcp6"),
+            ProcNetSource(path = "/proc/net/tcp", protocol = "tcp", parser = ProcNetTcpParser::parse),
+            ProcNetSource(path = "/proc/net/tcp6", protocol = "tcp6", parser = ProcNetTcpParser::parse),
+            ProcNetSource(path = "/proc/net/udp", protocol = "udp", parser = ProcNetUdpParser::parse),
+            ProcNetSource(path = "/proc/net/udp6", protocol = "udp6", parser = ProcNetUdpParser::parse),
         )
     }
 }

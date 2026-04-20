@@ -50,6 +50,15 @@ class AutomationIntegrationRepositoryTest {
     }
 
     @Test
+    fun `validate token rejects partial prefix matches`() {
+        val repository = buildRepository()
+        val enabled = repository.enable()
+
+        assertFalse(repository.validateToken(enabled.token!!.dropLast(1)))
+        assertFalse(repository.validateToken(enabled.token!!.take(4)))
+    }
+
+    @Test
     fun `record result persists caller hint and error without exposing token requirement`() {
         val repository = buildRepository()
         repository.enable()

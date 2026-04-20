@@ -11,11 +11,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.security.SecureRandom
 import java.util.concurrent.Executors
 
 class TunguskaVpnService : VpnService() {
     private val runtimeAuditor = RuntimeListenerAuditor()
     private val handler = Handler(Looper.getMainLooper())
+    private val healthCheckRandom = SecureRandom()
     private val startupExecutor = Executors.newSingleThreadExecutor()
     private val runtimeSessionController by lazy {
         RuntimeSessionController(
@@ -41,7 +43,7 @@ class TunguskaVpnService : VpnService() {
                 return
             }
             if (ActiveRuntimeSessionStore.isActive()) {
-                handler.postDelayed(this, HEALTH_CHECK_INTERVAL_MS)
+                handler.postDelayed(this, nextHealthCheckDelayMs())
             }
         }
     }
@@ -196,6 +198,12 @@ class TunguskaVpnService : VpnService() {
         handler.removeCallbacks(healthCheckRunnable)
     }
 
+    private fun nextHealthCheckDelayMs(): Long {
+        val jitterRange = (HEALTH_CHECK_JITTER_MS * 2 + 1).toInt()
+        val jitter = healthCheckRandom.nextInt(jitterRange) - HEALTH_CHECK_JITTER_MS.toInt()
+        return (HEALTH_CHECK_INTERVAL_MS + jitter).coerceAtLeast(MIN_HEALTH_CHECK_DELAY_MS)
+    }
+
     @Synchronized
     private fun beginStart(): Int {
         startGeneration += 1
@@ -222,6 +230,8 @@ class TunguskaVpnService : VpnService() {
     companion object {
         private const val TAG = "TunguskaVpnService"
         private const val HEALTH_CHECK_INTERVAL_MS = 10_000L
+        private const val HEALTH_CHECK_JITTER_MS = 2_000L
+        private const val MIN_HEALTH_CHECK_DELAY_MS = 5_000L
         private const val ACTION_START_RUNTIME = "io.acionyx.tunguska.vpnservice.action.START_RUNTIME"
         private const val ACTION_STOP = "io.acionyx.tunguska.vpnservice.action.STOP"
         private const val EXTRA_CONFIG_HASH = "io.acionyx.tunguska.vpnservice.extra.CONFIG_HASH"

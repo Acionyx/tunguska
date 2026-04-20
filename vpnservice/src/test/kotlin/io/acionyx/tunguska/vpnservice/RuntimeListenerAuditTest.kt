@@ -85,6 +85,25 @@ class RuntimeListenerAuditTest {
         assertTrue(result.summary.contains("unavailable"))
     }
 
+    @Test
+    fun `audit fails when current uid exposes a udp listener`() {
+        val auditor = RuntimeListenerAuditor(
+            procNetReader = mapProcReader(
+                "/proc/net/udp" to """
+                    sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops
+                     0: 0100007F:1F90 00000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 12345 2 0000000000000000 0
+                """.trimIndent(),
+            ),
+            clock = { 3456L },
+        )
+
+        val result = auditor.auditUid(uid = 1000)
+
+        assertEquals(RuntimeAuditStatus.FAIL, result.status)
+        assertEquals(1, result.socketCount)
+        assertTrue(result.findings.any { it.code == "LOOPBACK_LISTENER" })
+    }
+
     private fun mapProcReader(vararg entries: Pair<String, String>): ProcNetReader {
         val values = entries.toMap()
         return ProcNetReader { path -> values[path] }

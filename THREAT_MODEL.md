@@ -124,6 +124,7 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 These risks are known and currently accepted or still under validation:
 
 - The active runtime still uses an internal authenticated loopback bridge instead of a pure no-loopback data plane.
+- On rooted devices, a privileged app can bind directly to `tun0` with `SO_BINDTODEVICE` and send traffic into the VPN tunnel to confirm the egress IP. Android blocks this on ordinary non-rooted apps because the syscall requires elevated network capabilities, but the bundled `tun2socks` binary does not independently verify packet origin once traffic reaches the TUN file descriptor.
 - The full detector matrix has not yet been completed on physical hardware, even though functional tunneled traffic has already been confirmed on a real phone.
 - The new automation bridge expands the app-process surface, even though it is opt-in and token-gated.
 - Server-side Xray blocking can only reject traffic that reaches the VPN server; it cannot catch traffic that the client intentionally routes direct.

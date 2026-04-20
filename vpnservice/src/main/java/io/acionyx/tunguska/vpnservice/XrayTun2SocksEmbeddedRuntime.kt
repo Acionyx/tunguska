@@ -171,12 +171,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
         }
         Log.i(
             TAG,
-            "Preparing xray+tun2socks profile='${profile.name}' " +
-                "server='${profile.outbound.address}:${profile.outbound.port}' " +
-                "serverName='${profile.outbound.serverName}' " +
-                "fingerprint='${profile.outbound.utlsFingerprint}' " +
-                "publicKey='${profile.outbound.realityPublicKey}' " +
-                "shortId='${profile.outbound.realityShortId}'",
+            "Preparing xray+tun2socks profile='${profile.name}' config='${request.compiledConfig.configHash.take(12)}'.",
         )
         val xrayConfigFile = File(workspace.rootDir, "xray-runtime.json").apply {
             writeText(compiled.json)
@@ -222,6 +217,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
             if (!isProcessAlive(xrayProcess)) {
                 error("xray process exited during startup.")
             }
+            runCatching { xrayConfigFile.delete() }
 
             tunDupDescriptor = ParcelFileDescriptor.dup(tunnelHandle.descriptor.fileDescriptor)
             val tunFd = tunDupDescriptor?.fd ?: error("Failed to duplicate the tunnel descriptor for tun2socks.")
@@ -272,6 +268,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
         }.getOrElse { error ->
             RuntimeListenerAllowanceStore.clear()
             runCatching { tunDupDescriptor?.close() }
+            runCatching { xrayConfigFile.delete() }
             stopInternal(
                 state = XrayTun2SocksActiveState(
                     xrayProcess = xrayProcess,
@@ -421,7 +418,6 @@ private class XrayTun2SocksEmbeddedEngineSession(
             runCatching {
                 process.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
-                        Log.i(TAG, "[$name] $line")
                         when {
                             line.contains("accepted ", ignoreCase = true) -> {
                                 VpnRuntimeStore.recordRuntimeTelemetry(

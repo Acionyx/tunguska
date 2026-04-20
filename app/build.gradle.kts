@@ -12,8 +12,8 @@ android {
         applicationId = "io.acionyx.tunguska"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.2.4"
+        versionCode = 8
+        versionName = "0.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
@@ -25,10 +25,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             versionNameSuffix = "-internal"
             isDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
             matchingFallbacks += listOf("release")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
