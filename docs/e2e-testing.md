@@ -48,6 +48,22 @@ $env:TUNGUSKA_REAL_SHARE_LINK = "<real share link>"
 
 This flow starts the emulator, ensures Chrome is available, installs Tunguska plus the helper app, runs the app instrumentation, and pulls diagnostics into `logs/`.
 
+The default smoke suite includes `io.acionyx.tunguska.app.RegionalBypassProofTest`, which validates the visible Regional Bypass controls end to end through the app UI.
+
+## Regional Bypass Local Proof
+
+The local emulator proof covers the user-visible Regional Bypass behavior that Tunguska documents:
+
+- new imports default to `Russia direct`
+- `.ru`, `.su`, and `.рф` hosts preview as `DIRECT` when Russia direct is enabled
+- non-matching hosts keep the normal routing default while the preview shows the runtime `geoip:ru` hint
+- custom `Always direct domains` preview as `DIRECT`
+- disabling `Russia direct` returns Russian host previews to the normal routing default
+
+This local proof intentionally validates the feature through the same controls shown on the first screen rather than only through unit tests.
+
+The authoritative dataplane check for runtime `geoip:ru` classification still remains the physical-device validation step in [docs/mvp-device-validation.md](./mvp-device-validation.md), because the emulator proof exercises the preview and profile state, not a Russian public-IP endpoint.
+
 ## Joint Tunguska Plus Anubis Proof
 
 The canonical joint proof is `io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest` hosted by `jointtesthost`.

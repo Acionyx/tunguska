@@ -11,6 +11,7 @@ param(
     [string[]]$TestClasses = @(
         "io.acionyx.tunguska.app.VpnImportAndConnectTest",
         "io.acionyx.tunguska.app.ChromeIpProofTest",
+        "io.acionyx.tunguska.app.RegionalBypassProofTest",
         "io.acionyx.tunguska.app.AutomationRelayProofTest",
         "io.acionyx.tunguska.app.FullTunnelProofTest",
         "io.acionyx.tunguska.app.DenylistRoutingProofTest",

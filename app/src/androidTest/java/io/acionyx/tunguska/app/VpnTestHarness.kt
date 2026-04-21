@@ -2,6 +2,8 @@ package io.acionyx.tunguska.app
 
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -140,6 +142,72 @@ internal class VpnTestHarness(
             storedToken == token,
         )
         captureStep("automation_token_written")
+    }
+
+    fun openRegionalBypassConfig() {
+        scrollToTag(UiTags.CONFIGURE_REGIONAL_BYPASS_BUTTON)
+        if (composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag(UiTags.CONFIGURE_REGIONAL_BYPASS_BUTTON, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        captureStep("regional_bypass_config_open")
+    }
+
+    fun setRussiaDirectEnabled(enabled: Boolean) {
+        openRegionalBypassConfig()
+        scrollToTag(UiTags.RUSSIA_DIRECT_SWITCH)
+        if (isToggleEnabled(UiTags.RUSSIA_DIRECT_SWITCH) != enabled) {
+            composeRule.onNodeWithTag(UiTags.RUSSIA_DIRECT_SWITCH, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                isToggleEnabled(UiTags.RUSSIA_DIRECT_SWITCH) == enabled
+            }
+        }
+        captureStep("regional_bypass_russia_${if (enabled) "enabled" else "disabled"}")
+    }
+
+    fun addRegionalDirectDomain(domain: String) {
+        openRegionalBypassConfig()
+        replaceTextField(UiTags.CUSTOM_DIRECT_DOMAIN_FIELD, domain)
+        composeRule.onNodeWithTag(UiTags.ADD_DIRECT_DOMAIN_BUTTON, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        waitForComposeText(domain.lowercase(), timeoutMillis = 5_000)
+        captureStep("regional_bypass_custom_domain_added")
+    }
+
+    fun updateRoutePreview(
+        destinationHost: String,
+        destinationIp: String = "",
+        destinationPort: String = "443",
+        packageName: String = "",
+    ) {
+        openRegionalBypassConfig()
+        replaceTextField(UiTags.ROUTE_PREVIEW_PACKAGE_FIELD, packageName)
+        replaceTextField(UiTags.ROUTE_PREVIEW_HOST_FIELD, destinationHost)
+        replaceTextField(UiTags.ROUTE_PREVIEW_IP_FIELD, destinationIp)
+        replaceTextField(UiTags.ROUTE_PREVIEW_PORT_FIELD, destinationPort)
+        device.pressBack()
+        composeRule.waitForIdle()
+        captureStep("regional_bypass_preview_updated")
+    }
+
+    fun assertRoutePreviewDecision(action: String, routeId: String) {
+        waitForComposeText("Decision: $action via $routeId", timeoutMillis = 5_000)
+    }
+
+    fun assertRoutePreviewReasonContains(text: String) {
+        waitForComposeText(text, timeoutMillis = 5_000)
+    }
+
+    fun assertRoutePreviewHintContains(text: String) {
+        waitForComposeText(text, timeoutMillis = 5_000)
     }
 
     fun invokeAutomationStart(token: String, callerHint: String = "androidTest"): String {
@@ -366,6 +434,24 @@ internal class VpnTestHarness(
         device.executeShellCommand("pm clear $CHROME_PACKAGE")
         Thread.sleep(750)
     }
+
+    private fun scrollToTag(tag: String) {
+        composeRule.onNodeWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
+            .performScrollToNode(hasTestTag(tag))
+    }
+
+    private fun replaceTextField(tag: String, value: String) {
+        scrollToTag(tag)
+        composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .performScrollTo()
+            .performTextReplacement(value)
+        composeRule.waitForIdle()
+    }
+
+    private fun isToggleEnabled(tag: String): Boolean =
+        composeRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.ToggleableState] == ToggleableState.On
 
     private fun tapConnectButton() {
         composeRule.onNodeWithTag(UiTags.CONNECT_BUTTON, useUnmergedTree = true)

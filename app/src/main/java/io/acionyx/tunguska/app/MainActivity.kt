@@ -697,7 +697,7 @@ private fun RegionalBypassCard(
                     value = customDirectDomainDraft,
                     onValueChange = onCustomDirectDomainDraftChange,
                     label = { Text("Always direct domain") },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag(UiTags.CUSTOM_DIRECT_DOMAIN_FIELD),
                     singleLine = true,
                 )
                 ActionGroup {
@@ -1091,28 +1091,28 @@ private fun PreviewCard(
                 value = state.routePreview.packageName,
                 onValueChange = onPackageChange,
                 label = { Text("Package name") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.ROUTE_PREVIEW_PACKAGE_FIELD),
                 singleLine = true,
             )
             OutlinedTextField(
                 value = state.routePreview.destinationHost,
                 onValueChange = onHostChange,
                 label = { Text("Destination host") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.ROUTE_PREVIEW_HOST_FIELD),
                 singleLine = true,
             )
             OutlinedTextField(
                 value = state.routePreview.destinationIp,
                 onValueChange = onIpChange,
                 label = { Text("Destination IP") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.ROUTE_PREVIEW_IP_FIELD),
                 singleLine = true,
             )
             OutlinedTextField(
                 value = state.routePreview.destinationPort,
                 onValueChange = onPortChange,
                 label = { Text("Destination port") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.ROUTE_PREVIEW_PORT_FIELD),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
