@@ -241,7 +241,6 @@ Current security properties in the shipped code:
 - no telemetry by default
 - no cleartext traffic allowed by app network policy
 - no unauthenticated localhost proxy in the active runtime lane
-- no UDP support on the authenticated local bridge in the active runtime lane
 - no enabled Xray or sing-box management API in the active runtime lane
 - no open broadcast control surface for external automation
 - exported automation control is opt-in and token-gated
