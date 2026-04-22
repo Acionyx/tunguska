@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.VpnRuntimeContract
@@ -77,6 +78,7 @@ class VpnRuntimeClient(
         plan: TunnelSessionPlan,
         compiledConfig: CompiledEngineConfig,
         profileCanonicalJson: String,
+        runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     ) {
         send(
             VpnRuntimeContract.stageRuntimeMessage(
@@ -84,6 +86,7 @@ class VpnRuntimeClient(
                     plan = plan,
                     compiledConfig = compiledConfig,
                     profileCanonicalJson = profileCanonicalJson,
+                    runtimeStrategy = runtimeStrategy,
                 ),
                 replyTo = replyMessenger,
             ),

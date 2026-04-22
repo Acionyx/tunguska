@@ -20,6 +20,7 @@ class RuntimeSessionController(
                 request = request,
                 workspaceFactory = workspaceFactoryProvider(),
                 sessionLabel = sessionLabel,
+                strategyId = request.runtimeStrategy,
                 runtimeDependencies = runtimeDependencies,
             )
         }.getOrElse { error ->

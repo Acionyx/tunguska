@@ -13,6 +13,7 @@ import org.junit.Assert.fail
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
+import java.net.URLDecoder
 import java.util.regex.Pattern
 
 class AnubisJointUiHarness {
@@ -165,6 +166,14 @@ class AnubisJointUiHarness {
         captureStep("tunguska_phase_${sanitizeLabel(phase)}")
     }
 
+    fun assertSelectedRuntimeStrategy() {
+        val expectedStrategy = requestedRuntimeStrategy()
+        launchTunguska()
+        ensureTunguskaDiagnosticsExpanded()
+        waitForVisibleText("Strategy: $expectedStrategy", timeoutMillis = 15_000, scrollAttempts = 6)
+        captureStep("tunguska_strategy_${sanitizeLabel(expectedStrategy.lowercase())}")
+    }
+
     fun waitForTunguskaVpnServiceActive(timeoutMillis: Long = 15_000) {
         waitForTunguskaVpnServiceState(active = true, timeoutMillis = timeoutMillis)
     }
@@ -252,8 +261,7 @@ class AnubisJointUiHarness {
     }
 
     fun captureDiagnostics(label: String) {
-        writeWindowHierarchy(label)
-        writeScreenshot(label)
+        captureVisualDiagnostics(label)
         writeCommandOutput(
             fileName = "$label-logcat.txt",
             command = "logcat -d -v threadtime -s " +
@@ -521,10 +529,24 @@ class AnubisJointUiHarness {
         return output.toString(Charsets.UTF_8.name())
     }
 
-    private fun writeWindowHierarchy(label: String) {
-        diagnosticsDirectory.resolve("$label-window.xml").outputStream().use { output ->
-            device.dumpWindowHierarchy(output)
+    private fun captureVisualDiagnostics(label: String) {
+        val hierarchy = dumpWindowHierarchy()
+        val containsSensitiveFixture = containsSensitiveFixture(hierarchy)
+        writeWindowHierarchy(
+            label = label,
+            contents = redactSensitiveText(hierarchy),
+        )
+        if (containsSensitiveFixture) {
+            diagnosticsDirectory.resolve("$label-screen.txt").writeText(
+                "Screenshot skipped because the visible UI contained live share-link material.",
+            )
+        } else {
+            writeScreenshot(label)
         }
+    }
+
+    private fun writeWindowHierarchy(label: String, contents: String) {
+        diagnosticsDirectory.resolve("$label-window.xml").writeText(contents)
     }
 
     private fun writeScreenshot(label: String) {
@@ -535,12 +557,103 @@ class AnubisJointUiHarness {
     }
 
     private fun writeCommandOutput(fileName: String, command: String) {
-        diagnosticsDirectory.resolve(fileName).writeText(device.executeShellCommand(command))
+        diagnosticsDirectory.resolve(fileName).writeText(
+            redactSensitiveText(device.executeShellCommand(command)),
+        )
     }
 
     private fun captureStep(label: String) {
-        writeWindowHierarchy(label)
-        writeScreenshot(label)
+        captureVisualDiagnostics(label)
+    }
+
+    private fun ensureTunguskaDiagnosticsExpanded() {
+        if (device.hasObject(By.textContains("Strategy: "))) {
+            return
+        }
+        clickTextContaining("Show Diagnostics", scrollAttempts = 6)
+    }
+
+    private fun containsSensitiveFixture(text: String): Boolean =
+        SHARE_LINK_REGEX.containsMatchIn(text) ||
+            sensitiveFixtureTerms().any { text.contains(it) }
+
+    private fun redactSensitiveText(text: String): String {
+        var redacted = SHARE_LINK_REGEX.replace(text, REDACTED_SHARE_LINK)
+        sensitiveFixtureTerms().forEach { term ->
+            redacted = redacted.replace(term, REDACTED_TOKEN)
+        }
+        return redacted
+    }
+
+    private fun sensitiveFixtureTerms(): List<String> {
+        val shareLink = shareLinkFromFixture().trim()
+        if (shareLink.isBlank()) {
+            return emptyList()
+        }
+        return buildList {
+            addIfNotBlank(shareLink)
+            addIfNotBlank(urlDecode(shareLink.substringAfter('#', "")))
+            addIfNotBlank(queryParameter(shareLink, "sni"))
+            addIfNotBlank(queryParameter(shareLink, "sid"))
+            addIfNotBlank(queryParameter(shareLink, "pbk"))
+            endpointFromShareLink(shareLink)?.let { endpoint ->
+                addIfNotBlank(endpoint)
+                addIfNotBlank(endpoint.substringBeforeLast(":", endpoint))
+            }
+        }.distinct().sortedByDescending(String::length)
+    }
+
+    private fun shareLinkFromFixture(): String {
+        val hexValue = device.executeShellCommand("settings get global $PROFILE_SHARE_LINK_HEX_SETTING").trim()
+        if (hexValue.isNotBlank() && hexValue != "null") {
+            return decodeHex(hexValue)
+        }
+        val plainValue = device.executeShellCommand("settings get global $PROFILE_SHARE_LINK_SETTING").trim()
+        return plainValue.takeUnless { it.isBlank() || it == "null" }.orEmpty()
+    }
+
+    private fun endpointFromShareLink(shareLink: String): String? {
+        val match = ENDPOINT_REGEX.find(shareLink) ?: return null
+        val host = match.groupValues.getOrNull(1).orEmpty()
+        val port = match.groupValues.getOrNull(2).orEmpty()
+        return if (host.isBlank() || port.isBlank()) null else "$host:$port"
+    }
+
+    private fun queryParameter(shareLink: String, name: String): String? {
+        val query = shareLink.substringAfter('?', "").substringBefore('#')
+        if (query.isBlank()) {
+            return null
+        }
+        return query.split('&')
+            .mapNotNull { entry ->
+                val parts = entry.split('=', limit = 2)
+                if (parts.isEmpty()) {
+                    return@mapNotNull null
+                }
+                val key = urlDecode(parts[0])
+                if (!key.equals(name, ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+                urlDecode(parts.getOrElse(1) { "" })
+            }
+            .firstOrNull()
+    }
+
+    private fun decodeHex(value: String): String = runCatching {
+        value.chunked(2)
+            .map { chunk -> chunk.toInt(16).toByte() }
+            .toByteArray()
+            .toString(Charsets.UTF_8)
+    }.getOrDefault("")
+
+    private fun urlDecode(value: String): String = runCatching {
+        URLDecoder.decode(value, Charsets.UTF_8)
+    }.getOrDefault(value)
+
+    private fun MutableList<String>.addIfNotBlank(value: String?) {
+        value?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let(::add)
     }
 
     private fun detectProbeFailure(dump: String): String? {
@@ -560,6 +673,14 @@ class AnubisJointUiHarness {
         .replace(Regex("[^a-z0-9]+"), "_")
         .trim('_')
 
+    private fun requestedRuntimeStrategy(): String = InstrumentationRegistry.getArguments()
+        .getString(RUNTIME_STRATEGY_ARGUMENT)
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+        ?.uppercase()
+        ?.takeIf { value -> value == RUNTIME_STRATEGY_XRAY || value == RUNTIME_STRATEGY_SINGBOX }
+        ?: RUNTIME_STRATEGY_XRAY
+
     companion object {
         private const val ANUBIS_PACKAGE = "sgnv.anubis.app"
         private const val ANUBIS_COMPONENT = "sgnv.anubis.app/sgnv.anubis.app.ui.MainActivity"
@@ -576,7 +697,12 @@ class AnubisJointUiHarness {
         private const val TUNGUSKA_VPN_SERVICE_COMPONENT = ".vpnservice.TunguskaVpnService"
         private const val DIAGNOSTICS_DIRECTORY_NAME = "tunguska-smoke"
         private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
+        private const val PROFILE_SHARE_LINK_SETTING = "tunguska_profile_share_link"
+        private const val PROFILE_SHARE_LINK_HEX_SETTING = "tunguska_profile_share_link_hex"
         private const val TUNGUSKA_RUNTIME_SNAPSHOT_TEXT = "Runtime Snapshot"
+        private const val RUNTIME_STRATEGY_ARGUMENT = "runtime_strategy"
+        private const val RUNTIME_STRATEGY_XRAY = "XRAY_TUN2SOCKS"
+        private const val RUNTIME_STRATEGY_SINGBOX = "SINGBOX_EMBEDDED"
         private const val ANUBIS_HOME_TAB_TEXT = "Главная"
         private const val ANUBIS_VPN_TAB_TEXT = "VPN"
         private const val ANUBIS_DONE_BUTTON_TEXT = "Готово"
@@ -594,6 +720,10 @@ class AnubisJointUiHarness {
             PROBE_URL_FALLBACK,
             PROBE_URL_SECONDARY_FALLBACK,
         )
+        private val SHARE_LINK_REGEX = Regex("""(?:vless|vmess|trojan|ss)://[^"\s<]+""", RegexOption.IGNORE_CASE)
+        private val ENDPOINT_REGEX = Regex("""@([^:/?#]+):(\d+)""")
+        private const val REDACTED_SHARE_LINK = "[REDACTED_SHARE_LINK]"
+        private const val REDACTED_TOKEN = "[REDACTED]"
         private val IP_REGEX = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
         private val IP_ADDRESS_PATTERN: Pattern = Pattern.compile(IP_REGEX.pattern)
     }

@@ -50,6 +50,7 @@ The accepted runtime subset is intentionally narrow:
 - `pbk` or `publicKey` is required
 - `sid` or `shortId` is required
 - `flow=xtls-rprx-vision` is accepted when present
+- `spx` or `spiderX` is accepted when present
 
 Unsupported extra URI parameters are treated as warnings and ignored. Imports are staged first, then explicitly confirmed by the user before being written to storage.
 
@@ -276,6 +277,18 @@ Release page:
 The release process is documented in [docs/release-process.md](./docs/release-process.md).
 
 ## Build From Source
+
+Before the first Android build after a clean checkout, publish the local sing-box runtime dependency and rule-set assets:
+
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1
+```
+
+If you already keep an upstream `sing-box` checkout elsewhere, point the bootstrap at it instead of cloning under `.tmp`:
+
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1 -SingBoxRepoPath C:\src\SagerNet-sing-box
+```
 
 Typical local build:
 

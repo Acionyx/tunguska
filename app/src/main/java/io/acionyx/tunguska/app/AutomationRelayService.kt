@@ -57,14 +57,15 @@ class AutomationRelayService : Service() {
                 withTimeout(REQUEST_TIMEOUT_MS) {
                     when (action) {
                         AutomationRelayContract.ACTION_START -> {
+                            val runtimeStrategy = settingsRepository.load().runtimeStrategy
                             Log.i(TAG, "Calling startStoredProfile() requestId=$requestId")
                             statusStore.markProgress(
                                 requestId = requestId,
                                 action = action,
                                 callerHint = callerHint,
-                                summary = "Preparing and starting the stored Tunguska runtime profile.",
+                                summary = "Preparing and starting the stored Tunguska runtime profile with $runtimeStrategy.",
                             )
-                            orchestrator.startStoredProfile().also {
+                            orchestrator.startStoredProfile(runtimeStrategy = runtimeStrategy).also {
                                 Log.i(TAG, "startStoredProfile() finished requestId=$requestId status=${it.status}")
                             }
                         }

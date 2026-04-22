@@ -45,6 +45,7 @@ dependencies {
     implementation(projects.security.audit)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.libbox.android)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.junit4)

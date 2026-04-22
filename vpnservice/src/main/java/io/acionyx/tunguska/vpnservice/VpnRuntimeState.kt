@@ -70,7 +70,7 @@ object VpnRuntimeStore {
             phase = VpnRuntimePhase.STAGED,
             configHash = plan.configHash,
             sessionLabel = spec.sessionLabel,
-            activeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+            activeStrategy = request.runtimeStrategy,
             engineId = request.compiledConfig.engineId,
             engineFormat = request.compiledConfig.format,
             compiledPayloadBytes = request.compiledConfig.payload.toByteArray(Charsets.UTF_8).size,
@@ -166,7 +166,7 @@ object VpnRuntimeStore {
     }
 
     fun recordRuntimeTelemetry(
-        strategy: EmbeddedRuntimeStrategyId = snapshot.activeStrategy ?: EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+        strategy: EmbeddedRuntimeStrategyId = snapshot.activeStrategy ?: EmbeddedRuntimeStrategyPolicyStore.activeStrategyId(),
         bridgePort: Int? = snapshot.bridgePort,
         xrayPid: Long? = snapshot.xrayPid,
         tun2socksPid: Long? = snapshot.tun2socksPid,

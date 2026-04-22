@@ -19,6 +19,7 @@ class ProfileImportParserTest {
         assertEquals(443, imported.profile.outbound.port)
         assertEquals("public+key", imported.profile.outbound.realityPublicKey)
         assertEquals("abcd1234", imported.profile.outbound.realityShortId)
+        assertEquals(null, imported.profile.outbound.realitySpiderX)
         assertEquals("vless", imported.source.rawScheme)
         assertEquals("vless", imported.source.normalizedScheme)
         assertTrue(imported.warnings.isEmpty())
@@ -63,13 +64,24 @@ class ProfileImportParserTest {
     }
 
     @Test
+    fun `parses supported reality spider path`() {
+        val imported = ProfileImportParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
+                "?security=reality&sni=cdn.example.com&pbk=public-key&sid=abcd1234&spx=%2Fprobe#Alpha",
+        )
+
+        assertEquals("/probe", imported.profile.outbound.realitySpiderX)
+        assertTrue(imported.warnings.isEmpty())
+    }
+
+    @Test
     fun `warns when unsupported query parameters are ignored`() {
         val imported = ProfileImportParser.parse(
             "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
-                "?security=reality&sni=cdn.example.com&pbk=public-key&sid=abcd1234&spx=client-id#Alpha",
+                "?security=reality&sni=cdn.example.com&pbk=public-key&sid=abcd1234&foo=client-id#Alpha",
         )
 
-        assertTrue(imported.warnings.any { it.contains("spx") })
+        assertTrue(imported.warnings.any { it.contains("foo") })
     }
 
     @Test

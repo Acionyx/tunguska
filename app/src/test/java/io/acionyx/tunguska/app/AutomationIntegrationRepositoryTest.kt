@@ -1,6 +1,7 @@
 package io.acionyx.tunguska.app
 
 import io.acionyx.tunguska.crypto.SoftwareAesGcmCipherBox
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,6 +74,17 @@ class AutomationIntegrationRepositoryTest {
         assertEquals("Timed out", recorded.lastAutomationError)
         assertEquals("anubis", recorded.lastCallerHint)
         assertNotNull(recorded.lastAutomationAtEpochMs)
+    }
+
+    @Test
+    fun `runtime strategy selection persists across reload`() {
+        val repository = buildRepository()
+
+        val updated = repository.setRuntimeStrategy(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED)
+        val loaded = repository.load()
+
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, updated.runtimeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, loaded.runtimeStrategy)
     }
 
     private fun buildRepository(): AutomationIntegrationRepository = AutomationIntegrationRepository(

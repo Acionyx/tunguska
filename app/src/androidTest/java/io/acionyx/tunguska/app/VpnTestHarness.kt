@@ -23,6 +23,7 @@ import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.engine.singbox.SingboxEnginePlugin
 import io.acionyx.tunguska.netpolicy.RoutePreviewEngine
 import io.acionyx.tunguska.netpolicy.RoutePreviewRequest
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
@@ -33,6 +34,7 @@ import java.net.URLDecoder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 
@@ -132,6 +134,39 @@ internal class VpnTestHarness(
         return checkNotNull(automationRepository.load().token) {
             "Automation token was not generated after enabling the integration."
         }
+    }
+
+    fun selectRuntimeStrategy(strategy: EmbeddedRuntimeStrategyId) {
+        launchTunguska()
+        val strategyTag = when (strategy) {
+            EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> UiTags.RUNTIME_STRATEGY_XRAY_BUTTON
+            EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> UiTags.RUNTIME_STRATEGY_SINGBOX_BUTTON
+        }
+        if (composeRule.onAllNodesWithTag(strategyTag, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag(UiTags.SHOW_DIAGNOSTICS_BUTTON, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                composeRule.onAllNodesWithTag(strategyTag, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        composeRule.onNodeWithTag(strategyTag, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            automationRepository.load().runtimeStrategy == strategy
+        }
+        captureStep("runtime_strategy_${strategy.name.lowercase()}")
+    }
+
+    fun assertActiveRuntimeStrategy(expected: EmbeddedRuntimeStrategyId) {
+        val snapshot = requestRuntimeSnapshot()
+        assertEquals(
+            "Unexpected active runtime strategy.",
+            expected,
+            snapshot.activeStrategy,
+        )
     }
 
     fun writeAutomationTokenFixture(token: String) {
@@ -333,8 +368,7 @@ internal class VpnTestHarness(
     }
 
     fun captureDiagnostics(label: String) {
-        writeWindowHierarchy(label)
-        writeScreenshot(label)
+        captureVisualDiagnostics(label)
         writeCommandOutput(
             fileName = "$label-logcat.txt",
             command = "logcat -d -v threadtime -s " +
@@ -390,6 +424,7 @@ internal class VpnTestHarness(
         return arguments.getString("profile_share_link_hex")
             ?.let(::decodeHexUtf8)
             ?: arguments.getString("profile_share_link")
+            ?: shareLinkFromDeviceSettings()
             ?: DEFAULT_SHARE_LINK
     }
 
@@ -543,6 +578,20 @@ internal class VpnTestHarness(
         return bytes.toString(Charsets.UTF_8)
     }
 
+    private fun shareLinkFromDeviceSettings(): String? {
+        val hexValue = readGlobalSetting(PROFILE_SHARE_LINK_HEX_SETTING)
+        if (!hexValue.isNullOrBlank()) {
+            return decodeHexUtf8(hexValue)
+        }
+        return readGlobalSetting(PROFILE_SHARE_LINK_SETTING)
+    }
+
+    private fun readGlobalSetting(name: String): String? = runCatching {
+        device.executeShellCommand("settings get global $name")
+            .trim()
+            .takeUnless { it.isBlank() || it.equals("null", ignoreCase = true) }
+    }.getOrNull()
+
     private fun launchPackage(packageName: String, errorMessage: String) {
         val launchIntent = checkNotNull(
             appContext.packageManager.getLaunchIntentForPackage(packageName),
@@ -637,8 +686,7 @@ internal class VpnTestHarness(
     }
 
     private fun captureStep(label: String) {
-        writeWindowHierarchy(label)
-        writeScreenshot(label)
+        captureVisualDiagnostics(label)
     }
 
     private fun dumpWindowHierarchy(): String {
@@ -647,10 +695,24 @@ internal class VpnTestHarness(
         return output.toString(Charsets.UTF_8.name())
     }
 
-    private fun writeWindowHierarchy(label: String) {
-        diagnosticsDirectory.resolve("$label-window.xml").outputStream().use { output ->
-            device.dumpWindowHierarchy(output)
+    private fun captureVisualDiagnostics(label: String) {
+        val hierarchy = dumpWindowHierarchy()
+        val containsSensitiveFixture = containsSensitiveFixture(hierarchy)
+        writeWindowHierarchy(
+            label = label,
+            contents = redactSensitiveText(hierarchy),
+        )
+        if (containsSensitiveFixture) {
+            diagnosticsDirectory.resolve("$label-screen.txt").writeText(
+                "Screenshot skipped because the visible UI contained live share-link material.",
+            )
+        } else {
+            writeScreenshot(label)
         }
+    }
+
+    private fun writeWindowHierarchy(label: String, contents: String) {
+        diagnosticsDirectory.resolve("$label-window.xml").writeText(contents)
     }
 
     private fun writeScreenshot(label: String) {
@@ -661,7 +723,44 @@ internal class VpnTestHarness(
     }
 
     private fun writeCommandOutput(fileName: String, command: String) {
-        diagnosticsDirectory.resolve(fileName).writeText(device.executeShellCommand(command))
+        diagnosticsDirectory.resolve(fileName).writeText(
+            redactSensitiveText(device.executeShellCommand(command)),
+        )
+    }
+
+    private fun containsSensitiveFixture(text: String): Boolean =
+        SHARE_LINK_REGEX.containsMatchIn(text) ||
+            sensitiveFixtureTerms().any { text.contains(it) }
+
+    private fun redactSensitiveText(text: String): String {
+        var redacted = SHARE_LINK_REGEX.replace(text, REDACTED_SHARE_LINK)
+        sensitiveFixtureTerms().forEach { term ->
+            redacted = redacted.replace(term, REDACTED_TOKEN)
+        }
+        return redacted
+    }
+
+    private fun sensitiveFixtureTerms(): List<String> = runCatching {
+        val shareLink = shareLinkFromArgs().trim()
+        val profile = ProfileImportParser.parse(shareLink).profile
+        buildList {
+            addIfNotBlank(shareLink)
+            addIfNotBlank(profile.id)
+            addIfNotBlank(profile.name)
+            addIfNotBlank(profile.outbound.address)
+            addIfNotBlank(profile.outbound.serverName)
+            addIfNotBlank(profile.outbound.realityPublicKey)
+            addIfNotBlank(profile.outbound.realityShortId)
+            addIfNotBlank("Endpoint: ${profile.outbound.address}:${profile.outbound.port}")
+        }.distinct().sortedByDescending(String::length)
+    }.getOrElse {
+        emptyList()
+    }
+
+    private fun MutableList<String>.addIfNotBlank(value: String?) {
+        value?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let(::add)
     }
 
     private fun detectProbeFailure(dump: String): String? {
@@ -720,6 +819,8 @@ internal class VpnTestHarness(
             "io.acionyx.tunguska.trafficprobe/io.acionyx.tunguska.trafficprobe.ProbeActivity"
         private const val DIAGNOSTICS_DIRECTORY_NAME = "tunguska-smoke"
         private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
+        private const val PROFILE_SHARE_LINK_SETTING = "tunguska_profile_share_link"
+        private const val PROFILE_SHARE_LINK_HEX_SETTING = "tunguska_profile_share_link_hex"
         private const val PROBE_URL_PRIMARY = "https://api.ipify.org/"
         private const val PROBE_URL_FALLBACK = "https://ifconfig.me/ip"
         private const val PROBE_URL_SECONDARY_FALLBACK = "https://checkip.amazonaws.com/"
@@ -728,6 +829,9 @@ internal class VpnTestHarness(
             PROBE_URL_FALLBACK,
             PROBE_URL_SECONDARY_FALLBACK,
         )
+        private val SHARE_LINK_REGEX = Regex("""(?:vless|vmess|trojan|ss)://[^"\s<]+""", RegexOption.IGNORE_CASE)
+        private const val REDACTED_SHARE_LINK = "[REDACTED_SHARE_LINK]"
+        private const val REDACTED_TOKEN = "[REDACTED]"
         private val IP_REGEX = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
         private val IP_ADDRESS_PATTERN: Pattern = Pattern.compile(IP_REGEX.pattern)
         private const val DEFAULT_SHARE_LINK =

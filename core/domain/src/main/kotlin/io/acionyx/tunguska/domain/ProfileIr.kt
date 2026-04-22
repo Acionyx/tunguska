@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 const val REQUIRED_VLESS_FLOW: String = "xtls-rprx-vision"
+const val DEFAULT_REALITY_SPIDER_X: String = "/"
 
 @Serializable
 data class ProfileIr(
@@ -38,9 +39,12 @@ data class VlessRealityOutbound(
     val serverName: String,
     val realityPublicKey: String,
     val realityShortId: String,
+    val realitySpiderX: String? = null,
     val flow: String? = null,
     val utlsFingerprint: String = "chrome",
 ) {
+    fun effectiveRealitySpiderX(): String = realitySpiderX ?: DEFAULT_REALITY_SPIDER_X
+
     fun validate(): List<ValidationIssue> = buildList {
         if (address.isBlank()) add(ValidationIssue("outbound.address", "Server address must not be blank."))
         if (port !in 1..65535) add(ValidationIssue("outbound.port", "Port must be between 1 and 65535."))
@@ -51,6 +55,9 @@ data class VlessRealityOutbound(
         }
         if (realityShortId.isBlank()) {
             add(ValidationIssue("outbound.realityShortId", "REALITY short id must not be blank."))
+        }
+        if (realitySpiderX != null && realitySpiderX.isBlank()) {
+            add(ValidationIssue("outbound.realitySpiderX", "REALITY spider path must not be blank when provided."))
         }
         if (flow != null && flow != REQUIRED_VLESS_FLOW) {
             add(ValidationIssue("outbound.flow", "Only $REQUIRED_VLESS_FLOW is accepted in v1."))

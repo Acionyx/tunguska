@@ -11,6 +11,13 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven {
+            name = "tunguskaLibbox"
+            url = uri(rootDir.resolve(".tmp/maven"))
+            content {
+                includeGroup("io.acionyx.thirdparty")
+            }
+        }
     }
 }
 

@@ -24,6 +24,11 @@ data class CompiledEngineConfig(
     val payload: String,
     val configHash: String,
     val vpnDirectives: VpnDirectives,
+    val runtimeAssets: List<CompiledRuntimeAsset> = emptyList(),
+)
+
+data class CompiledRuntimeAsset(
+    val relativePath: String,
 )
 
 data class VpnDirectives(

@@ -75,15 +75,16 @@ $env:TUNGUSKA_REAL_SHARE_LINK = "<real share link>"
 .\tools\integration\run-anubis-e2e.ps1 -AnubisRepo ..\anubis
 ```
 
-That runner performs this sequence:
+That runner performs this sequence for both embedded Tunguska engines, `XRAY_TUN2SOCKS` and `SINGBOX_EMBEDDED`:
 
 1. boots a headed emulator
 2. ensures Chrome and Shizuku are ready
 3. installs Tunguska, `trafficprobe`, and `jointtesthost`
-4. prepares the Tunguska automation fixture with the live share link
-5. installs Anubis from the local checkout
-6. runs the neutral-host joint instrumentation
-7. pulls Tunguska and joint-host diagnostics into `logs/`
+4. installs Anubis from the local checkout
+5. prepares the Tunguska automation fixture with the live share link and the selected runtime lane
+6. runs the neutral-host joint instrumentation for that lane
+7. repeats fixture plus joint instrumentation for the other embedded lane
+8. pulls Tunguska and joint-host diagnostics into `logs/`
 
 The acceptance bar is:
 

@@ -799,7 +799,7 @@ internal object XrayCompatConfigCompiler {
                 put("fingerprint", profile.outbound.utlsFingerprint)
                 put("publicKey", profile.outbound.realityPublicKey)
                 put("shortId", profile.outbound.realityShortId)
-                put("spiderX", "/")
+                put("spiderX", profile.outbound.effectiveRealitySpiderX())
             })
         })
     }

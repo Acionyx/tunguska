@@ -7,6 +7,7 @@ import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteRule
+import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.api.EngineCapabilities
 import io.acionyx.tunguska.engine.api.EnginePlugin
@@ -37,6 +38,9 @@ class SingboxEnginePlugin : EnginePlugin {
             throw InvalidProfileException(issues)
         }
 
+        val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(profile)
+        val routeRuleSetAssets = collectRouteRuleSetAssets(effectiveRouting.rules)
+
         val root = buildJsonObject {
             put("log", buildJsonObject {
                 put("level", "warn")
@@ -49,7 +53,7 @@ class SingboxEnginePlugin : EnginePlugin {
                 add(proxyOutbound(profile))
                 add(taggedOutbound("direct", "direct"))
             })
-            put("route", route(profile))
+            put("route", route(profile, effectiveRouting.rules, routeRuleSetAssets))
             put("dns", dns(profile))
         }
 
@@ -64,6 +68,7 @@ class SingboxEnginePlugin : EnginePlugin {
                 splitTunnelMode = profile.vpn.splitTunnel,
                 safeMode = profile.safety.safeMode,
             ),
+            runtimeAssets = routeRuleSetAssets.map { CompiledRuntimeAsset(it.relativePath) },
         )
     }
 
@@ -99,6 +104,7 @@ class SingboxEnginePlugin : EnginePlugin {
                 put("fingerprint", profile.outbound.utlsFingerprint)
             })
             put("reality", buildJsonObject {
+                // Official libbox currently models client REALITY with only public_key + short_id.
                 put("enabled", true)
                 put("public_key", profile.outbound.realityPublicKey)
                 put("short_id", profile.outbound.realityShortId)
@@ -111,18 +117,28 @@ class SingboxEnginePlugin : EnginePlugin {
         put("type", type)
     }
 
-    private fun route(profile: ProfileIr): JsonObject = buildJsonObject {
-        val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(profile)
+    private fun route(
+        profile: ProfileIr,
+        effectiveRules: List<RouteRule>,
+        routeRuleSetAssets: List<SingboxRouteRuleSetAsset>,
+    ): JsonObject = buildJsonObject {
         put("auto_detect_interface", true)
         put("default_domain_resolver", LOCAL_DNS_TAG)
         if (profile.routing.defaultAction != RouteAction.BLOCK) {
             put("final", outboundTagFor(profile.routing.defaultAction))
         }
+        if (routeRuleSetAssets.isNotEmpty()) {
+            put("rule_set", buildJsonArray {
+                routeRuleSetAssets.forEach { asset ->
+                    add(localRuleSet(asset))
+                }
+            })
+        }
         put("rules", buildJsonArray {
             add(sniffRule())
             add(mandatoryLoopbackBypassRule())
             add(hijackDnsRule())
-            effectiveRouting.rules.forEach { rule ->
+            effectiveRules.forEach { rule ->
                 add(routeRule(rule))
             }
             if (profile.routing.defaultAction == RouteAction.BLOCK) {
@@ -152,6 +168,13 @@ class SingboxEnginePlugin : EnginePlugin {
         })
     }
 
+    private fun localRuleSet(asset: SingboxRouteRuleSetAsset): JsonObject = buildJsonObject {
+        put("tag", asset.tag)
+        put("type", "local")
+        put("format", "binary")
+        put("path", asset.relativePath)
+    }
+
     private fun routeRule(rule: RouteRule): JsonObject = buildJsonObject {
         when (rule.action) {
             RouteAction.BLOCK -> put("action", "reject")
@@ -173,7 +196,16 @@ class SingboxEnginePlugin : EnginePlugin {
             put("geosite", rule.match.geoSites.toJsonArray())
         }
         if (rule.match.geoIps.isNotEmpty()) {
-            put("geoip", rule.match.geoIps.toJsonArray())
+            put("rule_set", buildJsonArray {
+                rule.match.geoIps
+                    .asSequence()
+                    .map(::normalizeGeoIpCode)
+                    .distinct()
+                    .sorted()
+                    .forEach { code ->
+                        add(JsonPrimitive(geoIpRuleSetTag(code)))
+                    }
+            })
         }
         if (rule.match.asns.isNotEmpty()) {
             put("asn", buildJsonArray {
@@ -331,10 +363,40 @@ class SingboxEnginePlugin : EnginePlugin {
         RouteAction.DIRECT -> "direct"
         RouteAction.BLOCK -> error("RouteAction.BLOCK must be encoded as a reject rule action.")
     }
+
+    private fun collectRouteRuleSetAssets(rules: List<RouteRule>): List<SingboxRouteRuleSetAsset> = rules
+        .asSequence()
+        .flatMap { rule -> rule.match.geoIps.asSequence() }
+        .map(::normalizeGeoIpCode)
+        .distinct()
+        .sorted()
+        .map { code ->
+            SingboxRouteRuleSetAsset(
+                tag = geoIpRuleSetTag(code),
+                relativePath = "rule-set/${geoIpRuleSetTag(code)}.srs",
+            )
+        }
+        .toList()
+
+    private fun normalizeGeoIpCode(value: String): String {
+        val normalized = value.trim().lowercase()
+        require(normalized.isNotBlank()) { "GeoIP code must not be blank." }
+        require(normalized.all { it.isLetterOrDigit() || it == '_' || it == '-' }) {
+            "Unsupported sing-box GeoIP code '$value'."
+        }
+        return normalized
+    }
 }
+
+private data class SingboxRouteRuleSetAsset(
+    val tag: String,
+    val relativePath: String,
+)
 
 private const val LOCAL_DNS_TAG = "dns-local"
 private const val REMOTE_DNS_TAG_PREFIX = "dns-remote-"
+
+private fun geoIpRuleSetTag(code: String): String = "geoip-$code"
 
 private fun List<String>.toJsonArray(): JsonArray = buildJsonArray {
     forEach { value -> add(JsonPrimitive(value)) }

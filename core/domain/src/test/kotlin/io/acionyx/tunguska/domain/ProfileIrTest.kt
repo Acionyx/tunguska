@@ -29,6 +29,22 @@ class ProfileIrTest {
 
         assertTrue(issues.any { it.field == "safety.compatibilityLocalProxy" })
     }
+
+    @Test
+    fun `reality spider path defaults to slash when absent`() {
+        assertEquals("/", sampleProfile().outbound.effectiveRealitySpiderX())
+    }
+
+    @Test
+    fun `reality spider path preserves explicit value`() {
+        val profile = sampleProfile().copy(
+            outbound = sampleProfile().outbound.copy(
+                realitySpiderX = "/probe",
+            ),
+        )
+
+        assertEquals("/probe", profile.outbound.effectiveRealitySpiderX())
+    }
 }
 
 private fun sampleProfile(): ProfileIr = ProfileIr(
@@ -52,4 +68,3 @@ private fun sampleProfile(): ProfileIr = ProfileIr(
         ),
     ),
 )
-

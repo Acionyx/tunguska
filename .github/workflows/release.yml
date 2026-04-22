@@ -18,6 +18,10 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          go-version: "1.24.7"
+          cache: true
       - name: Install Android SDK Packages
         run: |
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
@@ -25,6 +29,9 @@ jobs:
           "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: Ensure Gradle Wrapper Is Executable
         run: chmod +x gradlew
+      - name: Bootstrap Embedded Sing-Box Runtime
+        shell: pwsh
+        run: ./tools/runtime/fetch-singbox-embedded.ps1
       - name: Build Release APK Assets
         run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
       - name: Prepare Release Assets

@@ -24,6 +24,7 @@ import io.acionyx.tunguska.netpolicy.RoutePreviewEngine
 import io.acionyx.tunguska.netpolicy.RoutePreviewOutcome
 import io.acionyx.tunguska.netpolicy.RoutePreviewRequest
 import io.acionyx.tunguska.storage.StoredProfile
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
@@ -205,6 +206,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 applyAutomationSettings(
                     settings = settings,
                     status = uiState.automationState.status,
+                )
+            }
+            .onFailure { error ->
+                uiState = uiState.copy(
+                    automationState = uiState.automationState.copy(
+                        status = null,
+                        error = error.message ?: error.javaClass.simpleName,
+                    ),
+                )
+            }
+    }
+
+    fun setRuntimeStrategy(strategy: EmbeddedRuntimeStrategyId) {
+        runCatching { automationRepository.setRuntimeStrategy(strategy) }
+            .onSuccess { settings ->
+                applyAutomationSettings(
+                    settings = settings,
+                    status = when (strategy) {
+                        EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> "Selected runtime lane: xray+tun2socks."
+                        EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "Selected runtime lane: sing-box embedded."
+                    },
                 )
             }
             .onFailure { error ->
@@ -1096,6 +1118,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 plan = uiState.tunnelPlan,
                 compiledConfig = uiState.compiledConfig,
                 profileCanonicalJson = uiState.profile.canonicalJson(),
+                runtimeStrategy = uiState.automationState.runtimeStrategy,
             )
         }.onFailure { error ->
             uiState = uiState.copy(controlError = error.message ?: error.javaClass.simpleName)
@@ -1110,7 +1133,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         uiState = uiState.copy(controlError = null)
         backgroundExecutor.execute {
             val result = runCatching {
-                runtimeAutomationOrchestrator.prepareProfile(uiState.profile)
+                runtimeAutomationOrchestrator.prepareProfile(
+                    profile = uiState.profile,
+                    runtimeStrategy = uiState.automationState.runtimeStrategy,
+                )
             }.fold(
                 onSuccess = { request ->
                     runtimeAutomationOrchestrator.startPreparedRuntime(request)
@@ -1287,6 +1313,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             automationState = AutomationState(
                 storagePath = automationRepository.storagePath,
                 keyReference = automationRepository.keyReference,
+                runtimeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
                 status = "Anubis automation is disabled by default.",
                 vpnPermissionReady = false,
             ),
@@ -1594,6 +1621,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 enabled = settings.enabled,
                 rawToken = settings.token,
                 tokenPreview = settings.token?.let(::maskAutomationToken),
+                runtimeStrategy = settings.runtimeStrategy,
                 lastAutomationStatus = settings.lastAutomationStatus.name,
                 lastAutomationError = settings.lastAutomationError,
                 lastAutomationAt = settings.lastAutomationAtEpochMs?.formatTimestamp(),
@@ -1615,6 +1643,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 plan = uiState.tunnelPlan,
                 compiledConfig = uiState.compiledConfig,
                 profileCanonicalJson = uiState.profile.canonicalJson(),
+                runtimeStrategy = uiState.automationState.runtimeStrategy,
             )
             runtimeClient.startRuntime()
             runtimeClient.requestStatus()
@@ -1826,6 +1855,7 @@ data class AutomationState(
     val tokenPreview: String? = null,
     val storagePath: String,
     val keyReference: String,
+    val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     val vpnPermissionReady: Boolean,
     val lastAutomationStatus: String = AutomationCommandStatus.NEVER_RUN.name,
     val lastAutomationError: String? = null,

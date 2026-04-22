@@ -4,6 +4,7 @@
 .idea/
 local.properties
 .tmp/
+third_party/
 dist/
 logs/
 crash_log.txt

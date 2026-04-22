@@ -137,6 +137,8 @@ object ProfileImportParser {
             issues += issue("import.realityShortId", "REALITY imports must specify a short id.")
         }
 
+        val spiderX = query["spx"] ?: query["spiderX"]
+
         if (issues.isNotEmpty()) {
             throw ProfileImportException(issues)
         }
@@ -162,6 +164,7 @@ object ProfileImportParser {
                 serverName = serverName.orEmpty(),
                 realityPublicKey = publicKey.orEmpty(),
                 realityShortId = shortId.orEmpty(),
+                realitySpiderX = spiderX,
                 flow = flow,
                 utlsFingerprint = query["fp"] ?: query["fingerprint"] ?: "chrome",
             ),
@@ -288,6 +291,8 @@ object ProfileImportParser {
         "serverName",
         "shortId",
         "sid",
+        "spiderX",
+        "spx",
         "sni",
         "type",
     )

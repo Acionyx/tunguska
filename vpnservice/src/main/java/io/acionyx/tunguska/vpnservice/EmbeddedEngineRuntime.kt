@@ -9,6 +9,7 @@ data class StagedRuntimeRequest(
     val plan: TunnelSessionPlan,
     val compiledConfig: CompiledEngineConfig,
     val profileCanonicalJson: String? = null,
+    val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
 )
 
 data class EmbeddedRuntimeDependencies(
@@ -18,11 +19,31 @@ data class EmbeddedRuntimeDependencies(
 
 enum class EmbeddedRuntimeStrategyId {
     XRAY_TUN2SOCKS,
+    SINGBOX_EMBEDDED,
 }
 
 data class EmbeddedRuntimeStrategyPolicy(
     val activeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
 )
+
+object EmbeddedRuntimeStrategyPolicyStore {
+    private val lock = Any()
+    private var policy: EmbeddedRuntimeStrategyPolicy = EmbeddedRuntimeStrategyPolicy()
+
+    fun snapshot(): EmbeddedRuntimeStrategyPolicy = synchronized(lock) { policy }
+
+    fun activeStrategyId(): EmbeddedRuntimeStrategyId = synchronized(lock) { policy.activeStrategy }
+
+    fun replace(newPolicy: EmbeddedRuntimeStrategyPolicy) {
+        synchronized(lock) {
+            policy = newPolicy
+        }
+    }
+
+    fun reset() {
+        replace(EmbeddedRuntimeStrategyPolicy())
+    }
+}
 
 enum class EmbeddedEngineHostStatus {
     NOT_PREPARED,
@@ -96,9 +117,10 @@ interface EmbeddedEngineHost {
 
 class EmbeddedEngineHostRegistry(
     private val hosts: List<EmbeddedEngineHost> = listOf(
+        SingboxEmbeddedHost(),
         XrayTun2SocksEmbeddedHost(),
     ),
-    private val strategyPolicy: EmbeddedRuntimeStrategyPolicy = EmbeddedRuntimeStrategyPolicy(),
+    private val strategyPolicy: EmbeddedRuntimeStrategyPolicy = EmbeddedRuntimeStrategyPolicyStore.snapshot(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     fun activeStrategyId(): EmbeddedRuntimeStrategyId = strategyPolicy.activeStrategy
@@ -107,6 +129,7 @@ class EmbeddedEngineHostRegistry(
         request: StagedRuntimeRequest,
         workspaceFactory: EngineSessionWorkspaceFactory,
         sessionLabel: String,
+        strategyId: EmbeddedRuntimeStrategyId = strategyPolicy.activeStrategy,
         runtimeDependencies: EmbeddedRuntimeDependencies = EmbeddedRuntimeDependencies(),
     ): EmbeddedEngineHostPreparation {
         val workspace = workspaceFactory.prepare(
@@ -115,7 +138,7 @@ class EmbeddedEngineHostRegistry(
         )
         val host = hosts.firstOrNull {
             it.engineId == request.compiledConfig.engineId &&
-                it.strategyId == strategyPolicy.activeStrategy
+                it.strategyId == strategyId
         }
         if (host == null) {
             val availableStrategies = hosts
@@ -198,6 +221,15 @@ class EngineSessionWorkspaceFactory(
         appendLine("""  "config_format": "${request.compiledConfig.format.jsonEscape()}",""")
         appendLine("""  "config_hash": "${request.compiledConfig.configHash.jsonEscape()}",""")
         appendLine("""  "payload_bytes": ${request.compiledConfig.payload.byteSize()},""")
+        appendLine("""  "runtime_asset_count": ${request.compiledConfig.runtimeAssets.size},""")
+        if (request.compiledConfig.runtimeAssets.isNotEmpty()) {
+            appendLine("  " + "\"runtime_assets\": [")
+            request.compiledConfig.runtimeAssets.forEachIndexed { index, asset ->
+                val suffix = if (index == request.compiledConfig.runtimeAssets.lastIndex) "" else ","
+                appendLine("""    "${asset.relativePath.jsonEscape()}"$suffix""")
+            }
+            appendLine("  ],")
+        }
         request.profileCanonicalJson?.let { profileJson ->
             appendLine("""  "profile_payload_bytes": ${profileJson.byteSize()},""")
         }
@@ -210,10 +242,9 @@ class EngineSessionWorkspaceFactory(
 
 class UnavailableEmbeddedEngineHost(
     override val engineId: String = "singbox",
+    override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : EmbeddedEngineHost {
-    override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS
-
     override fun prepare(
         workspace: EngineSessionWorkspace,
         request: StagedRuntimeRequest,
