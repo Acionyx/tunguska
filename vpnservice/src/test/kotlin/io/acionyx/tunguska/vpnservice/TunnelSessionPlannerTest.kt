@@ -11,6 +11,7 @@ import org.junit.Test
 class TunnelSessionPlannerTest {
     @After
     fun tearDown() {
+        EmbeddedRuntimeStrategyPolicyStore.reset()
         ActiveRuntimeSessionStore.stop()
         VpnRuntimeStore.stop()
     }
@@ -76,6 +77,28 @@ class TunnelSessionPlannerTest {
         assertEquals(2, snapshot.routeCount)
         assertEquals(2, snapshot.excludedRouteCount)
         assertEquals(9000, snapshot.mtu)
+    }
+
+    @Test
+    fun `staging records configured active runtime strategy`() {
+        val compiled = sampleCompiled(
+            VpnDirectives(
+                preserveLoopback = true,
+                splitTunnelMode = SplitTunnelMode.FullTunnel,
+                safeMode = true,
+            ),
+        )
+        val plan = TunnelSessionPlanner.plan(compiled)
+
+        val snapshot = VpnRuntimeStore.stage(
+            StagedRuntimeRequest(
+                plan = plan,
+                compiledConfig = compiled,
+                runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+            ),
+        )
+
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, snapshot.activeStrategy)
     }
 
     @Test
@@ -245,16 +268,16 @@ class TunnelSessionPlannerTest {
 
         val hosted = VpnRuntimeStore.recordEngineHost(
             EmbeddedEngineHostResult(
-                status = EmbeddedEngineHostStatus.UNAVAILABLE,
-                summary = "Embedded sing-box host is not linked yet.",
+                status = EmbeddedEngineHostStatus.READY,
+                summary = "Prepared embedded sing-box workspace.",
                 preparedAtEpochMs = 9012L,
                 workspacePath = "C:/tmp/runtime/session-1",
             ),
         )
 
-        assertEquals(EmbeddedEngineHostStatus.UNAVAILABLE, hosted.engineHostStatus)
+        assertEquals(EmbeddedEngineHostStatus.READY, hosted.engineHostStatus)
         assertEquals(9012L, hosted.lastEngineHostAtEpochMs)
-        assertEquals("Embedded sing-box host is not linked yet.", hosted.lastEngineHostSummary)
+        assertEquals("Prepared embedded sing-box workspace.", hosted.lastEngineHostSummary)
         assertEquals("C:/tmp/runtime/session-1", hosted.sessionWorkspacePath)
     }
 

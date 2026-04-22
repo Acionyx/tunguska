@@ -5,6 +5,7 @@ import io.acionyx.tunguska.domain.DnsMode
 import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.NetworkProtocol
 import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.defaultRegionalBypass
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteMatch
 import io.acionyx.tunguska.domain.RouteRule
@@ -42,6 +43,54 @@ class SingboxEnginePluginTest {
         assertEquals(SplitTunnelMode.Denylist(listOf("io.acionyx.excluded")), compiled.vpnDirectives.splitTunnelMode)
         assertFalse(compiled.payload.contains("allowInsecure"))
         assertFalse(compiled.payload.contains("\"type\":\"dns\""))
+    }
+
+    @Test
+    fun `compiler maps geoip routing to local sing-box rule-set assets`() {
+        val compiled = plugin.compile(
+            sampleProfile().copy(
+                routing = sampleProfile().routing.copy(
+                    regionalBypass = defaultRegionalBypass(),
+                ),
+            ),
+        )
+        val json = CanonicalJson.instance.parseToJsonElement(compiled.payload).jsonObject
+        val route = json.getValue("route").jsonObject
+        val ruleSets = route.getValue("rule_set").jsonArray
+        val regionalRule = route.getValue("rules").jsonArray.first { rule ->
+            rule.jsonObject["domain_suffix"]?.jsonArray?.any {
+                it.jsonPrimitive.content == "xn--p1ai"
+            } == true
+        }.jsonObject
+
+        assertEquals(listOf("rule-set/geoip-ru.srs"), compiled.runtimeAssets.map { it.relativePath })
+        assertEquals("geoip-ru", ruleSets.single().jsonObject.getValue("tag").jsonPrimitive.content)
+        assertEquals("local", ruleSets.single().jsonObject.getValue("type").jsonPrimitive.content)
+        assertEquals("binary", ruleSets.single().jsonObject.getValue("format").jsonPrimitive.content)
+        assertEquals("rule-set/geoip-ru.srs", ruleSets.single().jsonObject.getValue("path").jsonPrimitive.content)
+        assertEquals(listOf("geoip-ru"), regionalRule.getValue("rule_set").jsonArray.map { it.jsonPrimitive.content })
+        assertFalse(regionalRule.containsKey("geoip"))
+    }
+
+    @Test
+    fun `compiler emits libbox compatible reality block`() {
+        val compiled = plugin.compile(
+            sampleProfile().copy(
+                outbound = sampleProfile().outbound.copy(
+                    realitySpiderX = "/probe",
+                ),
+            ),
+        )
+
+        val json = CanonicalJson.instance.parseToJsonElement(compiled.payload).jsonObject
+        val reality = json.getValue("outbounds").jsonArray.first().jsonObject
+            .getValue("tls").jsonObject
+            .getValue("reality").jsonObject
+
+        assertEquals("public-key", reality.getValue("public_key").jsonPrimitive.content)
+        assertEquals("abcd1234", reality.getValue("short_id").jsonPrimitive.content)
+        assertFalse(reality.containsKey("spider_x"))
+        assertFalse(reality.containsKey("spiderX"))
     }
 }
 

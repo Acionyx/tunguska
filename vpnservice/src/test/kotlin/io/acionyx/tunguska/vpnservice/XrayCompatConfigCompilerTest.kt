@@ -97,6 +97,25 @@ class XrayCompatConfigCompilerTest {
     }
 
     @Test
+    fun `compiler emits default reality spider path`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile(),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val reality = root.getValue("outbounds").jsonArray.first().jsonObject
+            .getValue("streamSettings").jsonObject
+            .getValue("realitySettings").jsonObject
+
+        assertEquals("/", reality.getValue("spiderX").jsonPrimitive.content)
+    }
+
+    @Test
     fun `system dns uses built-in tcp resolvers and dns outbound interception`() {
         val compiled = XrayCompatConfigCompiler.compile(
             profile = sampleProfile().copy(dns = DnsMode.SystemDns),

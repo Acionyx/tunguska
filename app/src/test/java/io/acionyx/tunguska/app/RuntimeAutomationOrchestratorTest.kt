@@ -133,6 +133,65 @@ class RuntimeAutomationOrchestratorTest {
     }
 
     @Test
+    fun `prepare profile preserves requested runtime strategy`() {
+        val orchestrator = buildOrchestrator(
+            permissionGranted = true,
+            gateway = FakeRuntimeGateway(),
+        )
+
+        val prepared = orchestrator.prepareProfile(
+            profile = defaultBootstrapProfile(),
+            runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+        )
+
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, prepared.runtimeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, prepared.toStagedRuntimeRequest().runtimeStrategy)
+    }
+
+    @Test
+    fun `prepare stored profile preserves requested runtime strategy`() {
+        val orchestrator = buildOrchestrator(
+            permissionGranted = true,
+            gateway = FakeRuntimeGateway(),
+        )
+
+        val result = orchestrator.prepareStoredProfile(
+            runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+        )
+
+        assertEquals(AutomationCommandStatus.SUCCESS, result.status)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, result.preparedRequest?.runtimeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, result.preparedRequest?.toStagedRuntimeRequest()?.runtimeStrategy)
+    }
+
+    @Test
+    fun `start accepts ready sing-box runtime without bridge telemetry`() {
+        val gateway = FakeRuntimeGateway(
+            statusResponse = RuntimeGatewayResponse(VpnRuntimeSnapshot(phase = VpnRuntimePhase.IDLE)),
+            stageResponse = RuntimeGatewayResponse(VpnRuntimeSnapshot(phase = VpnRuntimePhase.STAGED)),
+            startResponse = RuntimeGatewayResponse(
+                VpnRuntimeSnapshot(
+                    phase = VpnRuntimePhase.RUNNING,
+                    activeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                    engineSessionStatus = EmbeddedEngineSessionStatus.STARTED,
+                ),
+            ),
+        )
+        val orchestrator = buildOrchestrator(
+            permissionGranted = true,
+            gateway = gateway,
+        )
+
+        val result = orchestrator.startPreparedRuntime(
+            orchestrator.prepareProfile(defaultBootstrapProfile()),
+        )
+
+        assertEquals(AutomationCommandStatus.SUCCESS, result.status)
+        assertEquals(VpnRuntimePhase.RUNNING, result.snapshot?.phase)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, result.snapshot?.activeStrategy)
+    }
+
+    @Test
     fun `stop succeeds when runtime returns to idle`() {
         val gateway = FakeRuntimeGateway(
             statusResponse = RuntimeGatewayResponse(VpnRuntimeSnapshot(phase = VpnRuntimePhase.RUNNING)),

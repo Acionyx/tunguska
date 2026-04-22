@@ -27,4 +27,6 @@ object UiTags {
     const val AUTOMATION_ROTATE_TOKEN_BUTTON = "automation_rotate_token_button"
     const val AUTOMATION_COPY_TOKEN_BUTTON = "automation_copy_token_button"
     const val AUTOMATION_REFRESH_BUTTON = "automation_refresh_button"
+    const val RUNTIME_STRATEGY_XRAY_BUTTON = "runtime_strategy_xray_button"
+    const val RUNTIME_STRATEGY_SINGBOX_BUTTON = "runtime_strategy_singbox_button"
 }

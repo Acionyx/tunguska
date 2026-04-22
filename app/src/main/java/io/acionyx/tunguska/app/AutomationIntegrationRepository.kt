@@ -4,6 +4,7 @@ import android.content.Context
 import io.acionyx.tunguska.crypto.CipherBox
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.storage.EncryptedArtifactStore
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.nio.file.Path
@@ -109,6 +110,12 @@ class AutomationIntegrationRepository(
         ),
     )
 
+    fun setRuntimeStrategy(strategy: EmbeddedRuntimeStrategyId): AutomationIntegrationSettings = save(
+        load().copy(
+            runtimeStrategy = strategy,
+        ),
+    )
+
     private fun save(settings: AutomationIntegrationSettings): AutomationIntegrationSettings {
         store.save(
             artifactType = AUTOMATION_ARTIFACT_TYPE,
@@ -141,6 +148,7 @@ enum class AutomationCommandStatus {
 data class AutomationIntegrationSettings(
     val enabled: Boolean = false,
     val token: String? = null,
+    val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     val lastAutomationStatus: AutomationCommandStatus = AutomationCommandStatus.NEVER_RUN,
     val lastAutomationError: String? = null,
     val lastAutomationAtEpochMs: Long? = null,
@@ -151,6 +159,7 @@ data class AutomationIntegrationSettings(
 private data class StoredAutomationIntegration(
     val enabled: Boolean = false,
     val token: String? = null,
+    val runtimeStrategy: String = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS.name,
     val lastAutomationStatus: String = AutomationCommandStatus.NEVER_RUN.name,
     val lastAutomationError: String? = null,
     val lastAutomationAtEpochMs: Long? = null,
@@ -160,6 +169,8 @@ private data class StoredAutomationIntegration(
 private fun StoredAutomationIntegration.toSettings(): AutomationIntegrationSettings = AutomationIntegrationSettings(
     enabled = enabled,
     token = token,
+    runtimeStrategy = runtimeStrategy
+        .let { value -> runCatching { EmbeddedRuntimeStrategyId.valueOf(value) }.getOrDefault(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS) },
     lastAutomationStatus = lastAutomationStatus
         .let { value -> runCatching { AutomationCommandStatus.valueOf(value) }.getOrDefault(AutomationCommandStatus.NEVER_RUN) },
     lastAutomationError = lastAutomationError,
@@ -170,6 +181,7 @@ private fun StoredAutomationIntegration.toSettings(): AutomationIntegrationSetti
 private fun AutomationIntegrationSettings.toStored(): StoredAutomationIntegration = StoredAutomationIntegration(
     enabled = enabled,
     token = token,
+    runtimeStrategy = runtimeStrategy.name,
     lastAutomationStatus = lastAutomationStatus.name,
     lastAutomationError = lastAutomationError,
     lastAutomationAtEpochMs = lastAutomationAtEpochMs,

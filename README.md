@@ -50,6 +50,7 @@ The accepted runtime subset is intentionally narrow:
 - `pbk` or `publicKey` is required
 - `sid` or `shortId` is required
 - `flow=xtls-rprx-vision` is accepted when present
+- `spx` or `spiderX` is accepted when present
 
 Unsupported extra URI parameters are treated as warnings and ignored. Imports are staged first, then explicitly confirmed by the user before being written to storage.
 
@@ -274,11 +275,50 @@ The release process is documented in [docs/release-process.md](./docs/release-pr
 
 ## Build From Source
 
+The pinned `libbox-android` dependency is consumed from GitHub Packages by default.
+
+Set GitHub Packages credentials first:
+
+```properties
+# ~/.gradle/gradle.properties
+githubPackagesUser=YOUR_GITHUB_USERNAME
+githubPackagesToken=YOUR_CLASSIC_PAT_WITH_READ_PACKAGES
+```
+
+Environment variables work too:
+
+```powershell
+$env:GITHUB_PACKAGES_USER = "YOUR_GITHUB_USERNAME"
+$env:GITHUB_PACKAGES_TOKEN = "YOUR_CLASSIC_PAT_WITH_READ_PACKAGES"
+```
+
+The local `.tmp/maven` override takes precedence when present. That keeps maintainer refreshes reproducible, but it also means your machine will prefer the locally published `libbox-android` over GitHub Packages until you remove or refresh that cache.
+
 Typical local build:
 
 ```powershell
 .\gradlew.bat :vpnservice:testDebugUnitTest :app:testDebugUnitTest :app:assembleInternal --no-configuration-cache
 ```
+
+Maintainers refreshing the pinned sing-box runtime can still build from upstream source and publish a local override under `.tmp/maven`:
+
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget LocalMaven
+```
+
+If you already keep an upstream `sing-box` checkout elsewhere, point the refresh at it instead of cloning under `.tmp`:
+
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget LocalMaven -SingBoxRepoPath C:\src\SagerNet-sing-box
+```
+
+To refresh the dependency and push the same pinned coordinates to GitHub Packages, publish both targets in one pass:
+
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget Both
+```
+
+For GitHub Packages publication, the token must be a classic PAT with `read:packages` and `write:packages`.
 
 Local sideload package helper:
 

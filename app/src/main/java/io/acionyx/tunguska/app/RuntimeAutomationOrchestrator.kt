@@ -16,6 +16,7 @@ import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.singbox.SingboxEnginePlugin
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionHealthStatus
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionStatus
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
@@ -40,7 +41,10 @@ class RuntimeAutomationOrchestrator(
     private val startReadyTimeoutMs: Long = 12_000L,
     private val readyPollIntervalMs: Long = 250L,
 ) {
-    fun prepareProfile(profile: ProfileIr): PreparedRuntimeRequest {
+    fun prepareProfile(
+        profile: ProfileIr,
+        runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    ): PreparedRuntimeRequest {
         logInfo("Compiling stored profile '${profile.name}' for automation.")
         val compiledConfig = plugin.compile(profile)
         return PreparedRuntimeRequest(
@@ -48,10 +52,13 @@ class RuntimeAutomationOrchestrator(
             compiledConfig = compiledConfig,
             tunnelPlan = TunnelSessionPlanner.plan(compiledConfig),
             profileCanonicalJson = profile.canonicalJson(),
+            runtimeStrategy = runtimeStrategy,
         )
     }
 
-    fun prepareStoredProfile(): RuntimeAutomationResult {
+    fun prepareStoredProfile(
+        runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    ): RuntimeAutomationResult {
         logInfo("Loading encrypted profile for automation.")
         val storedProfile = runCatching { profileRepository.reload() }
             .getOrElse { error ->
@@ -63,7 +70,12 @@ class RuntimeAutomationOrchestrator(
             }
 
         logInfo("Preparing runtime request for stored profile '${storedProfile.profile.name}'.")
-        val preparedRequest = runCatching { prepareProfile(storedProfile.profile) }
+        val preparedRequest = runCatching {
+            prepareProfile(
+                profile = storedProfile.profile,
+                runtimeStrategy = runtimeStrategy,
+            )
+        }
             .getOrElse { error ->
                 return RuntimeAutomationResult(
                     status = AutomationCommandStatus.PROFILE_INVALID,
@@ -153,8 +165,10 @@ class RuntimeAutomationOrchestrator(
         }
     }
 
-    fun startStoredProfile(): RuntimeAutomationResult {
-        val prepared = prepareStoredProfile()
+    fun startStoredProfile(
+        runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    ): RuntimeAutomationResult {
+        val prepared = prepareStoredProfile(runtimeStrategy = runtimeStrategy)
         val request = prepared.preparedRequest ?: return prepared
         return startPreparedRuntime(request)
     }
@@ -251,7 +265,10 @@ class RuntimeAutomationOrchestrator(
         if (snapshot.engineSessionHealthStatus == EmbeddedEngineSessionHealthStatus.FAILED) {
             return false
         }
-        return snapshot.bridgePort != null
+        return when (snapshot.activeStrategy ?: EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS) {
+            EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> snapshot.bridgePort != null
+            EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> true
+        }
     }
 
     private companion object {
@@ -272,11 +289,13 @@ data class PreparedRuntimeRequest(
     val compiledConfig: CompiledEngineConfig,
     val tunnelPlan: TunnelSessionPlan,
     val profileCanonicalJson: String,
+    val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
 ) {
     fun toStagedRuntimeRequest(): StagedRuntimeRequest = StagedRuntimeRequest(
         plan = tunnelPlan,
         compiledConfig = compiledConfig,
         profileCanonicalJson = profileCanonicalJson,
+        runtimeStrategy = runtimeStrategy,
     )
 }
 

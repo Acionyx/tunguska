@@ -57,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.acionyx.tunguska.domain.RegionalBypassPresetId
 import io.acionyx.tunguska.domain.normalizeDomainForRouting
 import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import java.time.Instant
 import java.time.ZoneId
@@ -261,7 +262,9 @@ private fun TunguskaApp(
                         body = buildList {
                             add("Hidden by default so the first screen stays on import, connect, status, and diagnostics.")
                             add("Current mode: ${if (showAdvancedDiagnostics) "expanded" else "collapsed"}")
-                            add("Primary runtime: xray+tun2socks.")
+                            add("Primary runtime: selectable xray+tun2socks or sing-box embedded.")
+                            add("Selected lane: ${runtimeStrategyLabel(state.automationState.runtimeStrategy)}")
+                            add("Restage or reconnect after switching lanes so the selected embedded runtime takes effect.")
                         },
                         actions = {
                             ActionGroup {
@@ -280,6 +283,20 @@ private fun TunguskaApp(
                                     onClick = { viewModel.stageRuntime() },
                                     modifier = Modifier.testTag(UiTags.RESTAGE_RUNTIME_BUTTON),
                                     primary = false,
+                                )
+                            }
+                            ActionGroup {
+                                ActionButton(
+                                    text = "Use Xray",
+                                    onClick = { viewModel.setRuntimeStrategy(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS) },
+                                    modifier = Modifier.testTag(UiTags.RUNTIME_STRATEGY_XRAY_BUTTON),
+                                    primary = state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+                                )
+                                ActionButton(
+                                    text = "Use Sing-box",
+                                    onClick = { viewModel.setRuntimeStrategy(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) },
+                                    modifier = Modifier.testTag(UiTags.RUNTIME_STRATEGY_SINGBOX_BUTTON),
+                                    primary = state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
                                 )
                             }
                         },
@@ -489,6 +506,11 @@ private fun formatTimestamp(epochMs: Long?): String {
     return DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
         Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()),
     )
+}
+
+private fun runtimeStrategyLabel(strategy: EmbeddedRuntimeStrategyId): String = when (strategy) {
+    EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> "xray+tun2socks"
+    EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "sing-box embedded"
 }
 
 @Composable

@@ -19,14 +19,6 @@ class TunguskaVpnService : VpnService() {
     private val handler = Handler(Looper.getMainLooper())
     private val healthCheckRandom = SecureRandom()
     private val startupExecutor = Executors.newSingleThreadExecutor()
-    private val runtimeSessionController by lazy {
-        RuntimeSessionController(
-            engineHostRegistry = EmbeddedEngineHostRegistry(),
-            workspaceFactoryProvider = {
-                EngineSessionWorkspaceFactory.fromContext(cacheDir = cacheDir)
-            },
-        )
-    }
     private val runtimeWatchdog = RuntimeSessionWatchdog(
         healthProbe = ActiveRuntimeSessionStore::health,
         stopRuntime = ActiveRuntimeSessionStore::stop,
@@ -95,7 +87,7 @@ class TunguskaVpnService : VpnService() {
                         }
                         return@execute
                     }
-                    val startOutcome = runtimeSessionController.start(
+                    val startOutcome = runtimeSessionController().start(
                         request = request,
                         sessionLabel = snapshot.sessionLabel ?: TunnelInterfacePlanner.plan(request.plan).sessionLabel,
                         runtimeDependencies = EmbeddedRuntimeDependencies(
@@ -226,6 +218,15 @@ class TunguskaVpnService : VpnService() {
 
     @Synchronized
     private fun isCurrentGeneration(generation: Int): Boolean = startGeneration == generation
+
+    private fun runtimeSessionController(): RuntimeSessionController = RuntimeSessionController(
+        engineHostRegistry = EmbeddedEngineHostRegistry(
+            strategyPolicy = EmbeddedRuntimeStrategyPolicyStore.snapshot(),
+        ),
+        workspaceFactoryProvider = {
+            EngineSessionWorkspaceFactory.fromContext(cacheDir = cacheDir)
+        },
+    )
 
     companion object {
         private const val TAG = "TunguskaVpnService"

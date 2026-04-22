@@ -42,6 +42,7 @@ Supported protocol subset:
 - TCP transport
 - `encryption=none` or omitted
 - optional `xtls-rprx-vision` flow
+- optional `spx` / `spiderX` REALITY spider path
 
 ### Routing model
 

@@ -15,13 +15,17 @@ param(
         "io.acionyx.tunguska.app.AutomationRelayProofTest",
         "io.acionyx.tunguska.app.FullTunnelProofTest",
         "io.acionyx.tunguska.app.DenylistRoutingProofTest",
-        "io.acionyx.tunguska.app.AllowlistRoutingProofTest"
+        "io.acionyx.tunguska.app.AllowlistRoutingProofTest",
+        "io.acionyx.tunguska.app.SingboxEmbeddedProofTest",
+        "io.acionyx.tunguska.app.SingboxChromeIpProofTest"
     )
 )
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
 $diagnosticsRemotePath = "files/tunguska-smoke"
+$profileShareLinkSetting = "tunguska_profile_share_link"
+$profileShareLinkHexSetting = "tunguska_profile_share_link_hex"
 . "$PSScriptRoot\UiAutomatorTools.ps1"
 $adb = Get-AdbPath
 
@@ -94,6 +98,47 @@ function Invoke-CheckedInstrumentation {
     }
 }
 
+function Clear-ProfileShareLinkFixture {
+    Invoke-Adb -Arguments @("shell", "settings", "delete", "global", $profileShareLinkHexSetting) | Out-Null
+    Invoke-Adb -Arguments @("shell", "settings", "delete", "global", $profileShareLinkSetting) | Out-Null
+}
+
+function Set-ProfileShareLinkFixture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileShareLink
+    )
+
+    $shareLinkHex = ([System.Text.Encoding]::UTF8.GetBytes($ProfileShareLink) | ForEach-Object {
+        $_.ToString("x2")
+    }) -join ""
+
+    Clear-ProfileShareLinkFixture
+    Invoke-Adb -Arguments @("shell", "settings", "put", "global", $profileShareLinkHexSetting, $shareLinkHex) | Out-Null
+}
+
+function Enable-Package {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName
+    )
+
+    Invoke-Adb -Arguments @("shell", "pm", "enable", "--user", "0", $PackageName) | Out-Null
+    Invoke-Adb -Arguments @("shell", "cmd", "package", "enable", $PackageName) | Out-Null
+}
+
+function Reset-InterferingPackages {
+    $packages = @(
+        "sgnv.anubis.app",
+        "io.acionyx.tunguska.jointtesthost"
+    )
+
+    foreach ($packageName in $packages) {
+        Invoke-Adb -Arguments @("shell", "am", "force-stop", $packageName) | Out-Null
+    }
+    Invoke-Adb -Arguments @("shell", "input", "keyevent", "KEYCODE_HOME") | Out-Null
+}
+
 Push-Location $root
 try {
     Write-Host "Phase: start emulator"
@@ -108,6 +153,7 @@ try {
     & "tools\emulator\ensure-chrome.ps1"
     Assert-LastExitCode "Ensure Chrome"
     Assert-EmulatorOnline
+    Reset-InterferingPackages
 
     if (-not $SkipInstall) {
         Assert-EmulatorOnline
@@ -129,36 +175,40 @@ try {
 
     Invoke-Adb -Arguments @("shell", "run-as", "io.acionyx.tunguska", "rm", "-rf", $diagnosticsRemotePath) | Out-Null
     Invoke-Adb -Arguments @("shell", "run-as", "io.acionyx.tunguska", "mkdir", "-p", $diagnosticsRemotePath) | Out-Null
-    Invoke-Adb -Arguments @("shell", "cmd", "package", "enable", "io.acionyx.tunguska") | Out-Null
+    Enable-Package -PackageName "io.acionyx.tunguska"
 
     if (-not $ShareLink -and $env:TUNGUSKA_REAL_SHARE_LINK) {
         $ShareLink = $env:TUNGUSKA_REAL_SHARE_LINK
     }
 
-    if ($ShareLink) {
-        $shareLinkHex = ([System.Text.Encoding]::UTF8.GetBytes($ShareLink) | ForEach-Object {
-            $_.ToString("x2")
-        }) -join ""
-    }
-
-    foreach ($testClass in $TestClasses) {
-        Assert-EmulatorOnline
-        Write-Host "Phase: run $testClass"
-        $instrumentArgs = @(
-            "shell", "am", "instrument", "-w", "-r",
-            "-e", "class", $testClass
-        )
+    $managingProfileFixture = $false
+    try {
         if ($ShareLink) {
-            $instrumentArgs += @("-e", "profile_share_link_hex", $shareLinkHex)
+            Set-ProfileShareLinkFixture -ProfileShareLink $ShareLink
+            $managingProfileFixture = $true
         }
-        if ($ExpectedPhase) {
-            $instrumentArgs += @("-e", "expected_phase", $ExpectedPhase)
+
+        foreach ($testClass in $TestClasses) {
+            Assert-EmulatorOnline
+            Write-Host "Phase: run $testClass"
+            $instrumentArgs = @(
+                "shell", "am", "instrument", "-w", "-r",
+                "-e", "class", $testClass
+            )
+            if ($ExpectedPhase) {
+                $instrumentArgs += @("-e", "expected_phase", $ExpectedPhase)
+            }
+            $instrumentArgs += @("io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner")
+            Invoke-CheckedInstrumentation -Step "Instrumentation $testClass" -Arguments $instrumentArgs
+            Assert-EmulatorOnline
         }
-        $instrumentArgs += @("io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner")
-        Invoke-CheckedInstrumentation -Step "Instrumentation $testClass" -Arguments $instrumentArgs
-        Assert-EmulatorOnline
+        & "tools\emulator\pull-diagnostics.ps1"
     }
-    & "tools\emulator\pull-diagnostics.ps1"
+    finally {
+        if ($managingProfileFixture) {
+            Clear-ProfileShareLinkFixture
+        }
+    }
 }
 finally {
     Pop-Location

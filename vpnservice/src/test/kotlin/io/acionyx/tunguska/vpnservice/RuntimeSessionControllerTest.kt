@@ -15,6 +15,7 @@ import org.junit.Test
 class RuntimeSessionControllerTest {
     @After
     fun tearDown() {
+        EmbeddedRuntimeStrategyPolicyStore.reset()
         ActiveRuntimeSessionStore.stop()
         VpnRuntimeStore.stop()
     }
@@ -149,6 +150,107 @@ class RuntimeSessionControllerTest {
         assertTrue(workspaceRoot.listFiles().isNullOrEmpty())
     }
 
+    @Test
+    fun `controller starts host selected by staged runtime strategy`() {
+        val session = FakeEmbeddedEngineSession(clock = { 3333L })
+        val controller = RuntimeSessionController(
+            engineHostRegistry = EmbeddedEngineHostRegistry(
+                hosts = listOf(
+                    ReadyEmbeddedEngineHost(
+                        clock = { 2222L },
+                        session = session,
+                        strategyIdValue = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                    ),
+                ),
+                strategyPolicy = EmbeddedRuntimeStrategyPolicy(
+                    activeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+                ),
+                clock = { 2222L },
+            ),
+            workspaceFactoryProvider = {
+                EngineSessionWorkspaceFactory(
+                    rootDir = Files.createTempDirectory("tunguska-runtime").toFile(),
+                    clock = { 4444L },
+                )
+            },
+            clock = { 5555L },
+        )
+        val request = sampleRequest().copy(
+            runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+        )
+        VpnRuntimeStore.stage(request)
+        VpnRuntimeStore.markStartRequested()
+
+        val outcome = controller.start(
+            request = request,
+            sessionLabel = "Tunguska abc123",
+        )
+
+        assertNull(outcome.failureReason)
+        assertNotNull(outcome.activeSession)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, VpnRuntimeStore.snapshot().activeStrategy)
+    }
+
+    @Test
+    fun `controller starts default sing-box host with fake runtime`() {
+        val runtime = ControllerFakeSingboxRuntime()
+        val workspaceRoot = Files.createTempDirectory("tunguska-runtime").toFile()
+        val controller = RuntimeSessionController(
+            engineHostRegistry = EmbeddedEngineHostRegistry(
+                hosts = listOf(
+                    SingboxEmbeddedHost(
+                        clock = { 2222L },
+                        sessionFactory = SingboxEmbeddedSessionFactory { request, workspace, runtimeConfigFile, _, clock ->
+                            SingboxEmbeddedEngineSession(
+                                request = request,
+                                workspace = workspace,
+                                runtimeConfigFile = runtimeConfigFile,
+                                runtime = runtime,
+                                clock = clock,
+                            )
+                        },
+                    ),
+                ),
+                strategyPolicy = EmbeddedRuntimeStrategyPolicy(
+                    activeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                ),
+                clock = { 2222L },
+            ),
+            workspaceFactoryProvider = {
+                EngineSessionWorkspaceFactory(
+                    rootDir = workspaceRoot,
+                    clock = { 3333L },
+                )
+            },
+            clock = { 4444L },
+        )
+        val request = sampleRequest().copy(
+            runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+        )
+        VpnRuntimeStore.stage(request)
+        VpnRuntimeStore.markStartRequested()
+
+        val outcome = controller.start(
+            request = request,
+            sessionLabel = "Tunguska abc123",
+        )
+
+        assertNull(outcome.failureReason)
+        assertNotNull(outcome.activeSession)
+        assertTrue(ActiveRuntimeSessionStore.isActive())
+        assertEquals(EmbeddedEngineHostStatus.READY, VpnRuntimeStore.snapshot().engineHostStatus)
+        assertEquals(EmbeddedEngineSessionStatus.STARTED, VpnRuntimeStore.snapshot().engineSessionStatus)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, VpnRuntimeStore.snapshot().activeStrategy)
+        assertEquals(1, runtime.startCalls)
+
+        val stopResult = ActiveRuntimeSessionStore.stop()
+
+        assertNotNull(stopResult)
+        assertEquals(EmbeddedEngineSessionStatus.STOPPED, stopResult.status)
+        assertEquals(1, runtime.stopCalls)
+        assertTrue(workspaceRoot.listFiles().isNullOrEmpty())
+    }
+
     private fun sampleRequest(): StagedRuntimeRequest {
         val compiled = CompiledEngineConfig(
             engineId = "singbox",
@@ -171,9 +273,10 @@ class RuntimeSessionControllerTest {
 private class ReadyEmbeddedEngineHost(
     private val clock: () -> Long,
     private val session: EmbeddedEngineSession,
+    private val strategyIdValue: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
 ) : EmbeddedEngineHost {
     override val engineId: String = "singbox"
-    override val strategyId: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS
+    override val strategyId: EmbeddedRuntimeStrategyId = strategyIdValue
 
     override fun prepare(
         workspace: EngineSessionWorkspace,
@@ -223,4 +326,22 @@ private class FakeEmbeddedEngineSession(
             observedAtEpochMs = clock(),
         )
     }
+}
+
+private class ControllerFakeSingboxRuntime : SingboxRuntime {
+    var startCalls: Int = 0
+    var stopCalls: Int = 0
+
+    override fun start() {
+        startCalls += 1
+    }
+
+    override fun stop() {
+        stopCalls += 1
+    }
+
+    override fun health(): SingboxRuntimeHealth = SingboxRuntimeHealth(
+        healthy = true,
+        summary = "Embedded sing-box runtime is healthy.",
+    )
 }

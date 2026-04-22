@@ -5,6 +5,7 @@ import android.os.Message
 import android.os.Messenger
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
+import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
 
 object VpnRuntimeContract {
     const val MSG_GET_STATUS: Int = 1
@@ -25,7 +26,9 @@ object VpnRuntimeContract {
     private const val KEY_ENGINE_ID = "engine_id"
     private const val KEY_ENGINE_FORMAT = "engine_format"
     private const val KEY_ENGINE_PAYLOAD = "engine_payload"
+    private const val KEY_ENGINE_RUNTIME_ASSETS = "engine_runtime_assets"
     private const val KEY_PROFILE_CANONICAL_JSON = "profile_canonical_json"
+    private const val KEY_REQUESTED_RUNTIME_STRATEGY = "requested_runtime_strategy"
 
     private const val KEY_PHASE = "phase"
     private const val KEY_SESSION_LABEL = "session_label"
@@ -97,6 +100,8 @@ object VpnRuntimeContract {
             putString(KEY_ENGINE_ID, request.compiledConfig.engineId)
             putString(KEY_ENGINE_FORMAT, request.compiledConfig.format)
             putString(KEY_ENGINE_PAYLOAD, request.compiledConfig.payload)
+            putStringArray(KEY_ENGINE_RUNTIME_ASSETS, encodeRuntimeAssets(request.compiledConfig.runtimeAssets))
+            putString(KEY_REQUESTED_RUNTIME_STRATEGY, request.runtimeStrategy.name)
             request.profileCanonicalJson?.let { profileCanonicalJson ->
                 val profileBytes = profileCanonicalJson.toByteArray(Charsets.UTF_8).size
                 require(profileBytes <= MAX_PROFILE_JSON_BYTES) {
@@ -131,6 +136,7 @@ object VpnRuntimeContract {
                 splitTunnelMode = plan.splitTunnelMode,
                 safeMode = bundle.getBoolean(KEY_SAFE_MODE, true),
             ),
+            runtimeAssets = decodeRuntimeAssets(bundle.getStringArray(KEY_ENGINE_RUNTIME_ASSETS)),
         )
         require(compiledConfig.engineId.isNotBlank()) {
             "Staged runtime request is missing the engine id."
@@ -142,6 +148,9 @@ object VpnRuntimeContract {
             plan = plan,
             compiledConfig = compiledConfig,
             profileCanonicalJson = bundle.getString(KEY_PROFILE_CANONICAL_JSON),
+            runtimeStrategy = bundle.getString(KEY_REQUESTED_RUNTIME_STRATEGY)
+                ?.let(EmbeddedRuntimeStrategyId::valueOf)
+                ?: EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
         )
     }
 
@@ -267,6 +276,14 @@ object VpnRuntimeContract {
     )
 
     fun decodeError(bundle: Bundle): String? = bundle.getString(KEY_ERROR_MESSAGE)
+
+    internal fun encodeRuntimeAssets(runtimeAssets: List<CompiledRuntimeAsset>): Array<String> = runtimeAssets
+        .map(CompiledRuntimeAsset::relativePath)
+        .toTypedArray()
+
+    internal fun decodeRuntimeAssets(encoded: Array<String>?): List<CompiledRuntimeAsset> = encoded
+        ?.map(::CompiledRuntimeAsset)
+        .orEmpty()
 
     private fun encodeSplitTunnelMode(mode: SplitTunnelMode): String = when (mode) {
         SplitTunnelMode.FullTunnel -> "FULL"

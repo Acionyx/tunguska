@@ -28,6 +28,7 @@ class AnubisJointUiProofTest {
         harness.toggleAnubisProtection(enabled = true)
         harness.waitForVpnTransportActive()
         harness.waitForTunguskaVpnServiceActive()
+        harness.assertSelectedRuntimeStrategy()
 
         harness.toggleAnubisProtection(enabled = false)
         harness.waitForVpnTransportInactive()
@@ -40,8 +41,9 @@ class AnubisJointUiProofTest {
         )
         harness.waitForVpnTransportActive()
         harness.waitForTunguskaVpnServiceActive()
+        harness.assertSelectedRuntimeStrategy()
 
-        val tunneledIp = harness.waitForForegroundTrafficProbeIp("anubis_launch_vpn")
+        val tunneledIp = harness.launchTrafficProbeAndReadIp("anubis_launch_vpn")
         assertNotEquals("Anubis launch-with-VPN kept the same public IP.", directIp, tunneledIp)
 
         harness.toggleAnubisProtection(enabled = false)

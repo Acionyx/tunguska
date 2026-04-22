@@ -3,6 +3,7 @@ param(
     [string]$JavaHome = "",
     [string]$AvdName = "tunguska-api34",
     [string]$AnubisRepo = "",
+    [string[]]$RuntimeStrategies = @("XRAY_TUN2SOCKS", "SINGBOX_EMBEDDED"),
     [switch]$Headless,
     [switch]$NoHardReset,
     [switch]$SkipInstall,
@@ -12,6 +13,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$profileShareLinkSetting = "tunguska_profile_share_link"
+$profileShareLinkHexSetting = "tunguska_profile_share_link_hex"
 . "$PSScriptRoot\..\common\PathTools.ps1"
 
 $androidHome = Get-AndroidSdkRoot
@@ -98,6 +101,68 @@ function Invoke-CheckedInstrumentation {
     }
 }
 
+function Get-ProfileShareLinkFixture {
+    $hexValue = (& $adb shell settings get global $profileShareLinkHexSetting).Trim()
+    if ($hexValue -and $hexValue -ne "null") {
+        return $hexValue
+    }
+    $plainValue = (& $adb shell settings get global $profileShareLinkSetting).Trim()
+    if ($plainValue -and $plainValue -ne "null") {
+        return $plainValue
+    }
+    return ""
+}
+
+function Clear-ProfileShareLinkFixture {
+    & $adb shell settings delete global $profileShareLinkHexSetting | Out-Null
+    & $adb shell settings delete global $profileShareLinkSetting | Out-Null
+}
+
+function Set-ProfileShareLinkFixture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileShareLink
+    )
+
+    $shareLinkHex = ([System.Text.Encoding]::UTF8.GetBytes($ProfileShareLink) | ForEach-Object {
+        $_.ToString("x2")
+    }) -join ""
+
+    Clear-ProfileShareLinkFixture
+    & $adb shell settings put global $profileShareLinkHexSetting $shareLinkHex | Out-Null
+}
+
+function Enable-Package {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName
+    )
+
+    & $adb shell pm enable --user 0 $PackageName | Out-Null
+    & $adb shell cmd package enable $PackageName | Out-Null
+}
+
+function Normalize-RuntimeStrategies {
+    param(
+        [string[]]$Values
+    )
+
+    $normalized = @(
+        $Values |
+            Where-Object { $_ -and $_.Trim() } |
+            ForEach-Object { $_.Trim().ToUpperInvariant() }
+    )
+    if (-not $normalized) {
+        throw "At least one runtime strategy must be provided."
+    }
+    $supported = @("XRAY_TUN2SOCKS", "SINGBOX_EMBEDDED")
+    $unsupported = @($normalized | Where-Object { $_ -notin $supported } | Select-Object -Unique)
+    if ($unsupported) {
+        throw "Unsupported runtime strategies: $($unsupported -join ', ')."
+    }
+    return @($normalized | Select-Object -Unique)
+}
+
 Push-Location $root
 try {
     Write-Host "Phase: start emulator"
@@ -120,13 +185,14 @@ try {
     if (-not $ShareLink -and $env:TUNGUSKA_REAL_SHARE_LINK) {
         $ShareLink = $env:TUNGUSKA_REAL_SHARE_LINK
     }
-    if (-not $ShareLink) {
-        throw "A real VLESS share link is required. Pass -ShareLink or set TUNGUSKA_REAL_SHARE_LINK."
+    $managingProfileFixture = $false
+    if ($ShareLink) {
+        Set-ProfileShareLinkFixture -ProfileShareLink $ShareLink
+        $managingProfileFixture = $true
+    } elseif (-not (Get-ProfileShareLinkFixture)) {
+        throw "A real VLESS share link is required. Pass -ShareLink, set TUNGUSKA_REAL_SHARE_LINK, or pre-stage the emulator setting fixture."
     }
-
-    $shareLinkHex = ([System.Text.Encoding]::UTF8.GetBytes($ShareLink) | ForEach-Object {
-        $_.ToString("x2")
-    }) -join ""
+    $runtimeStrategies = Normalize-RuntimeStrategies -Values $RuntimeStrategies
 
     if (-not $SkipInstall) {
         Assert-EmulatorOnline
@@ -147,25 +213,6 @@ try {
             "-Dkotlin.incremental=false"
         Assert-LastExitCode "Tunguska install"
     }
-
-    Assert-EmulatorOnline
-    Write-Host "Phase: prepare Tunguska automation fixture"
-    & $adb shell am force-stop sgnv.anubis.app
-    & $adb shell pm clear io.acionyx.tunguska | Out-Null
-    & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
-    & $adb shell cmd package enable io.acionyx.tunguska | Out-Null
-    & $adb shell run-as io.acionyx.tunguska rm -rf files/tunguska-smoke | Out-Null
-    & $adb shell run-as io.acionyx.tunguska mkdir -p files/tunguska-smoke | Out-Null
-    Invoke-CheckedInstrumentation -Step "Tunguska fixture preparation" -Arguments @(
-        "shell", "am", "instrument", "-w", "-r",
-        "-e", "class", "io.acionyx.tunguska.app.PrepareAutomationFixtureTest",
-        "-e", "profile_share_link_hex", $shareLinkHex,
-        "io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner"
-    )
-    Assert-EmulatorOnline
-
-    & "tools\emulator\pull-diagnostics.ps1"
-    Assert-EmulatorOnline
 
     Push-Location $AnubisRepo
     try {
@@ -192,27 +239,50 @@ try {
         Pop-Location
     }
 
-    Assert-EmulatorOnline
-    Write-Host "Phase: run Tunguska Anubis joint UI test"
-    & $adb shell am force-stop sgnv.anubis.app
-    & $adb shell pm clear sgnv.anubis.app | Out-Null
-    & $adb shell pm clear io.acionyx.tunguska.jointtesthost | Out-Null
-    & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
-    & $adb shell cmd package enable io.acionyx.tunguska | Out-Null
-    & $adb shell cmd package enable sgnv.anubis.app | Out-Null
-    & $adb shell cmd package enable io.acionyx.tunguska.jointtesthost | Out-Null
-    & $adb shell cmd package enable io.acionyx.tunguska.trafficprobe | Out-Null
-    & $adb shell run-as io.acionyx.tunguska.jointtesthost rm -rf files/tunguska-smoke | Out-Null
-    & $adb shell run-as io.acionyx.tunguska.jointtesthost mkdir -p files/tunguska-smoke | Out-Null
-    Invoke-CheckedInstrumentation -Step "Tunguska Anubis joint UI instrumentation" -Arguments @(
-        "shell", "am", "instrument", "-w", "-r",
-        "-e", "class", "io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest",
-        "-e", "profile_share_link_hex", $shareLinkHex,
-        "io.acionyx.tunguska.jointtesthost.test/androidx.test.runner.AndroidJUnitRunner"
-    )
+    foreach ($runtimeStrategy in $runtimeStrategies) {
+        Assert-EmulatorOnline
+        Write-Host "Phase: prepare Tunguska automation fixture ($runtimeStrategy)"
+        & $adb shell am force-stop sgnv.anubis.app
+        & $adb shell pm clear io.acionyx.tunguska | Out-Null
+        & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
+        Enable-Package -PackageName "io.acionyx.tunguska"
+        & $adb shell run-as io.acionyx.tunguska rm -rf files/tunguska-smoke | Out-Null
+        & $adb shell run-as io.acionyx.tunguska mkdir -p files/tunguska-smoke | Out-Null
+        Invoke-CheckedInstrumentation -Step "Tunguska fixture preparation ($runtimeStrategy)" -Arguments @(
+            "shell", "am", "instrument", "-w", "-r",
+            "-e", "class", "io.acionyx.tunguska.app.PrepareAutomationFixtureTest",
+            "-e", "runtime_strategy", $runtimeStrategy,
+            "io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner"
+        )
+        Assert-EmulatorOnline
 
-    & "tools\emulator\pull-diagnostics.ps1" -AppPackage "io.acionyx.tunguska.jointtesthost"
+        & "tools\emulator\pull-diagnostics.ps1"
+        Assert-EmulatorOnline
+
+        Write-Host "Phase: run Tunguska Anubis joint UI test ($runtimeStrategy)"
+        & $adb shell am force-stop sgnv.anubis.app
+        & $adb shell pm clear sgnv.anubis.app | Out-Null
+        & $adb shell pm clear io.acionyx.tunguska.jointtesthost | Out-Null
+        & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
+        Enable-Package -PackageName "io.acionyx.tunguska"
+        Enable-Package -PackageName "sgnv.anubis.app"
+        Enable-Package -PackageName "io.acionyx.tunguska.jointtesthost"
+        Enable-Package -PackageName "io.acionyx.tunguska.trafficprobe"
+        & $adb shell run-as io.acionyx.tunguska.jointtesthost rm -rf files/tunguska-smoke | Out-Null
+        & $adb shell run-as io.acionyx.tunguska.jointtesthost mkdir -p files/tunguska-smoke | Out-Null
+        Invoke-CheckedInstrumentation -Step "Tunguska Anubis joint UI instrumentation ($runtimeStrategy)" -Arguments @(
+            "shell", "am", "instrument", "-w", "-r",
+            "-e", "class", "io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest",
+            "-e", "runtime_strategy", $runtimeStrategy,
+            "io.acionyx.tunguska.jointtesthost.test/androidx.test.runner.AndroidJUnitRunner"
+        )
+
+        & "tools\emulator\pull-diagnostics.ps1" -AppPackage "io.acionyx.tunguska.jointtesthost"
+    }
 }
 finally {
+    if ($managingProfileFixture) {
+        Clear-ProfileShareLinkFixture
+    }
     Pop-Location
 }

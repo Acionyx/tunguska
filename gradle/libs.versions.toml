@@ -14,6 +14,7 @@ androidxTestExt = "1.3.0"
 uiAutomator = "2.3.0"
 androidxTestOrchestrator = "1.6.1"
 androidxTestRunner = "1.6.2"
+libboxAndroid = "2026.04.22-99e1ffe"
 
 [libraries]
 junit4 = { module = "junit:junit", version = "4.13.2" }
@@ -42,6 +43,7 @@ androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "a
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-test-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiAutomator" }
 androidx-test-orchestrator = { module = "androidx.test:orchestrator", version.ref = "androidxTestOrchestrator" }
+libbox-android = { module = "io.acionyx.thirdparty:libbox-android", version.ref = "libboxAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

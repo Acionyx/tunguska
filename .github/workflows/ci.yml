@@ -11,14 +11,18 @@ permissions: {}
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_PACKAGES_USER: ${{ github.actor }}
+      GITHUB_PACKAGES_TOKEN: ${{ github.token }}
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
           cache: gradle
       - name: Install Android SDK Packages
         run: |
