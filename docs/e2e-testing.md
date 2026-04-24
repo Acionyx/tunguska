@@ -58,8 +58,10 @@ Focused routing/security UI proofs:
 
 ```powershell
 .\gradlew.bat :app:installDebug :app:installDebugAndroidTest --console=plain
-adb shell am instrument -w -e class io.acionyx.tunguska.app.RegionalBypassProofTest,io.acionyx.tunguska.app.SecurityExportProofTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class io.acionyx.tunguska.app.RegionalBypassProofTest,io.acionyx.tunguska.app.SecurityExportProofTest,io.acionyx.tunguska.app.AdvancedDiagnosticsProofTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner
 ```
+
+`AdvancedDiagnosticsProofTest` is the focused UI proof for the completed runtime-strategy diagnostics slice. It verifies that Advanced diagnostics renders the strategy capability and runtime lane summary cards, that the runtime lane `(i)` action scrolls back into the capability summary instead of opening the old generic dialog, and that a `Supported with limits` capability chip expands its inline technical note.
 
 Focused Chrome/IP proofs for both runtime lanes:
 

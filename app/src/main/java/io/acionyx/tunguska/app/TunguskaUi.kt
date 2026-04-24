@@ -49,6 +49,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +60,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -77,8 +80,10 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -110,14 +115,27 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.acionyx.tunguska.R
+import io.acionyx.tunguska.domain.REQUIRED_VLESS_FLOW
 import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.NetworkProtocol
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RegionalBypassPresetId
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.domain.displayLabel
+import io.acionyx.tunguska.domain.endpointSummary
+import io.acionyx.tunguska.engine.api.EngineCapabilitySupport
+import io.acionyx.tunguska.engine.api.EngineCapabilitySupportState
 import io.acionyx.tunguska.domain.normalizeDomainForRouting
+import io.acionyx.tunguska.domain.outboundProtocolLabel
+import io.acionyx.tunguska.domain.outboundShapeLabel
+import io.acionyx.tunguska.domain.outboundSecurityLabel
+import io.acionyx.tunguska.domain.outboundTransportLabel
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
+import io.acionyx.tunguska.vpnservice.profileShapeLabel
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
 
@@ -129,9 +147,9 @@ fun TunguskaAppShell(
 ) {
     val state = viewModel.uiState
     val context = LocalContext.current
-    var currentScreen by rememberSaveable { mutableStateOf(TunguskaScreen.HOME) }
-    var regionalDirectDomainDraft by rememberSaveable { mutableStateOf("") }
+    var currentScreen by rememberSaveable { mutableStateOf(defaultScreenFor(TunguskaSection.HOME)) }
     var returnToProfilesAfterImport by rememberSaveable { mutableStateOf(false) }
+    var regionalDirectDomainDraft by rememberSaveable { mutableStateOf("") }
     val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.markVpnPermissionGranted()
@@ -146,6 +164,7 @@ fun TunguskaAppShell(
             onNotificationRouteConsumed()
         }
     }
+
     LaunchedEffect(state.subscriptionState.notificationAttentionToken) {
         if (state.subscriptionState.notificationAttentionToken != null) {
             currentScreen = TunguskaScreen.SECURITY
@@ -249,6 +268,8 @@ fun TunguskaAppShell(
                             onDiscardImport = viewModel::discardStagedImport,
                             onQrPayloadDetected = viewModel::stageQrImportPayload,
                             onImportError = viewModel::reportImportError,
+                            onUseRecommendedStrategy = viewModel::setRuntimeStrategy,
+                            onSaveProfileEditor = viewModel::saveProfileEditorDraft,
                             onToggleRussia = viewModel::setRussiaDirectEnabled,
                             onPromptDecision = viewModel::decideRegionalBypassPrompt,
                             onAddRegionalDomain = {
@@ -319,6 +340,8 @@ fun TunguskaAppShell(
                         onDiscardImport = viewModel::discardStagedImport,
                         onQrPayloadDetected = viewModel::stageQrImportPayload,
                         onImportError = viewModel::reportImportError,
+                        onUseRecommendedStrategy = viewModel::setRuntimeStrategy,
+                        onSaveProfileEditor = viewModel::saveProfileEditorDraft,
                         onToggleRussia = viewModel::setRussiaDirectEnabled,
                         onPromptDecision = viewModel::decideRegionalBypassPrompt,
                         onAddRegionalDomain = {
@@ -381,6 +404,12 @@ private enum class TunguskaScreen(
         title = "Profiles",
         subtitle = "Review the active sealed profile or replace it through validated intake.",
         detail = false,
+    ),
+    PROFILE_EDITOR(
+        section = TunguskaSection.PROFILES,
+        title = "Advanced profile editor",
+        subtitle = "Adjust the current profile fields with typed controls before resealing the active profile.",
+        detail = true,
     ),
     PROFILE_IMPORT(
         section = TunguskaSection.PROFILES,
@@ -656,6 +685,8 @@ private fun ScreenHost(
     onDiscardImport: () -> Unit,
     onQrPayloadDetected: (String, ImportCaptureSource) -> Unit,
     onImportError: (String) -> Unit,
+    onUseRecommendedStrategy: (EmbeddedRuntimeStrategyId) -> Unit,
+    onSaveProfileEditor: (ProfileEditorDraft) -> Unit,
     onToggleRussia: (Boolean) -> Unit,
     onPromptDecision: (Boolean) -> Unit,
     onAddRegionalDomain: () -> Unit,
@@ -712,7 +743,17 @@ private fun ScreenHost(
                 TunguskaScreen.PROFILES -> ProfilesScreen(
                     metrics = metrics,
                     state = state,
+                    onOpenEditor = { onNavigate(TunguskaScreen.PROFILE_EDITOR) },
                     onOpenImport = { onNavigate(TunguskaScreen.PROFILE_IMPORT) },
+                    onOpenAdvancedDiagnostics = { onNavigate(TunguskaScreen.ADVANCED_DIAGNOSTICS) },
+                    onUseRecommendedStrategy = onRuntimeStrategyChange,
+                )
+
+                TunguskaScreen.PROFILE_EDITOR -> ProfileEditorScreen(
+                    metrics = metrics,
+                    state = state,
+                    onOpenAdvancedDiagnostics = { onNavigate(TunguskaScreen.ADVANCED_DIAGNOSTICS) },
+                    onSaveDraft = onSaveProfileEditor,
                 )
 
                 TunguskaScreen.PROFILE_IMPORT -> ProfileImportScreen(
@@ -723,6 +764,8 @@ private fun ScreenHost(
                     onDiscardImport = onDiscardImport,
                     onQrPayloadDetected = onQrPayloadDetected,
                     onImportError = onImportError,
+                    onUseRecommendedStrategy = onUseRecommendedStrategy,
+                    onOpenAdvancedDiagnostics = { onNavigate(TunguskaScreen.ADVANCED_DIAGNOSTICS) },
                 )
 
                 TunguskaScreen.ROUTING -> RoutingScreen(
@@ -954,6 +997,8 @@ private fun HomeScreen(
     onOpenProfiles: () -> Unit,
     onOpenRouting: () -> Unit,
 ) {
+    val connected = state.runtimeSnapshot.phase == VpnRuntimePhase.RUNNING
+    val connectDecision = state.connectDecision
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -973,7 +1018,7 @@ private fun HomeScreen(
             onClick = onOpenRouting,
         )
         AnimatedContent(
-            targetState = state.runtimeSnapshot.phase == VpnRuntimePhase.RUNNING,
+            targetState = connected,
             transitionSpec = {
                 fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(160))
             },
@@ -1031,7 +1076,28 @@ private fun HomeScreen(
                 }
             }
         }
-        HomeStatusLine(state = state)
+        if (!connected && connectDecision == null) {
+            state.runtimeSelection.connectDecisionHint?.let { hint ->
+                SupportingNote(
+                    text = hint,
+                    color = TunguskaTheme.warning,
+                )
+            }
+        }
+        connectDecision?.let { decision ->
+            SupportingNote(
+                text = decision.message,
+                color = when (decision.phase) {
+                    ConnectDecisionPhase.STARTING -> TunguskaTheme.warning
+                    ConnectDecisionPhase.STARTED -> TunguskaTheme.accent
+                    ConnectDecisionPhase.FAILED -> TunguskaTheme.danger
+                },
+            )
+        }
+        HomeStatusLine(
+            state = state,
+            showLaneHint = connected && connectDecision?.phase != ConnectDecisionPhase.STARTED,
+        )
     }
 }
 
@@ -1041,9 +1107,8 @@ private fun ProtectionHeroCard(
     state: MainUiState,
 ) {
     val phase = state.runtimeSnapshot.phase
+    val visual = heroVisual(phase)
     val heroStageSize = metrics.heroRingSize + if (metrics.compact) 52.dp else 64.dp
-    val backgroundBurstScale = 2f
-    val backgroundPlasmaScale = heroPlasmaBackdropScale(phase)
     var energyTrigger by remember { mutableStateOf(0) }
     var previousPhase by remember { mutableStateOf<VpnRuntimePhase?>(null) }
 
@@ -1071,28 +1136,31 @@ private fun ProtectionHeroCard(
                 modifier = Modifier.size(heroStageSize),
                 contentAlignment = Alignment.Center,
             ) {
-                if (phase != VpnRuntimePhase.IDLE) {
+                if (visual.burstEnabled) {
                     HeroEnergyBurst(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer(scaleX = backgroundBurstScale, scaleY = backgroundBurstScale),
-                        accentColor = heroVisual(phase).accent,
+                            .graphicsLayer(scaleX = visual.burstScale, scaleY = visual.burstScale),
+                        accentColor = visual.accent,
                         trigger = energyTrigger,
-                        intensity = heroEnergyBurstIntensity(phase),
-                        durationMillis = heroEnergyBurstDurationMillis(phase),
-                    )
-                    HeroPlasmaBackdrop(
-                        phase = phase,
-                        diameter = metrics.heroRingSize,
-                        modifier = Modifier.graphicsLayer(
-                            scaleX = backgroundPlasmaScale,
-                            scaleY = backgroundPlasmaScale,
-                        ),
+                        intensity = visual.burstIntensity,
+                        durationMillis = visual.burstDurationMillis,
                     )
                 }
+                HeroPlasmaBackdrop(
+                    phase = phase,
+                    visual = visual,
+                    diameter = metrics.heroRingSize,
+                    modifier = Modifier.graphicsLayer(
+                        scaleX = visual.backdropScale,
+                        scaleY = visual.backdropScale,
+                        alpha = visual.backdropAlpha,
+                    ),
+                )
                 ProtectionSignal(
                     diameter = metrics.heroRingSize,
                     phase = phase,
+                    visual = visual,
                 )
             }
             AnimatedContent(
@@ -1117,10 +1185,10 @@ private fun ProtectionHeroCard(
 @Composable
 private fun HeroPlasmaBackdrop(
     phase: VpnRuntimePhase,
+    visual: HeroVisual,
     diameter: Dp,
     modifier: Modifier = Modifier,
 ) {
-    val visual = heroVisual(phase)
     val accent by animateColorAsState(
         targetValue = visual.accent,
         animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
@@ -1145,37 +1213,18 @@ private fun HeroPlasmaBackdrop(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            tween(durationMillis = heroSegmentOrbitDurationMillis(phase), easing = LinearEasing),
+            tween(durationMillis = visual.segmentOrbitDurationMillis, easing = LinearEasing),
         ),
         label = "hero-plasma-backdrop-segment-sweep",
     )
-    val plasmaEnergy = if (phase == VpnRuntimePhase.IDLE) {
-        0.34f
-    } else {
-        (0.26f + visual.glowAlpha * 1.08f).coerceIn(0.3f, 1.18f)
-    }
-    val plasmaPulse = if (phase == VpnRuntimePhase.IDLE) {
-        periodicRange(
-            progress = pulseProgress,
-            min = 0.82f,
-            max = 1.08f,
-            phaseOffset = 0.22f,
-        )
-    } else {
-        periodicRange(
-            progress = pulseProgress,
-            min = 0.78f,
-            max = 1.02f,
-            phaseOffset = 0.22f,
-        )
-    }
-    val plasmaInstability = when (phase) {
-        VpnRuntimePhase.IDLE -> 0.02f
-        VpnRuntimePhase.STAGED -> 0.06f
-        VpnRuntimePhase.START_REQUESTED -> 0.18f
-        VpnRuntimePhase.RUNNING -> 0.08f
-        VpnRuntimePhase.FAIL_CLOSED -> 0.14f
-    }
+    val plasmaEnergy = visual.backdropEnergy
+    val plasmaPulse = periodicRange(
+        progress = pulseProgress,
+        min = visual.backdropPulseMin,
+        max = visual.backdropPulseMax,
+        phaseOffset = 0.22f,
+    )
+    val plasmaInstability = visual.backdropInstability
 
     Canvas(modifier = modifier.size(diameter)) {
         val canvasSize = this.size
@@ -1185,7 +1234,7 @@ private fun HeroPlasmaBackdrop(
         val outerShellRadius = canvasSize.minDimension / 2f - outerShellStroke * 0.72f
         val orbitRadius = outerShellRadius * 0.72f
 
-        if (phase == VpnRuntimePhase.IDLE) {
+        if (visual.backdropMode == HeroBackdropMode.PARTICLE_FLOW) {
             drawHeroParticleFlow(
                 accentColor = accent,
                 center = center,
@@ -1213,8 +1262,8 @@ private fun HeroPlasmaBackdrop(
 private fun ProtectionSignal(
     diameter: Dp,
     phase: VpnRuntimePhase,
+    visual: HeroVisual,
 ) {
-    val visual = heroVisual(phase)
     val accent by animateColorAsState(
         targetValue = visual.accent,
         animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
@@ -1257,7 +1306,7 @@ private fun ProtectionSignal(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            tween(durationMillis = heroSegmentOrbitDurationMillis(phase), easing = LinearEasing),
+            tween(durationMillis = visual.segmentOrbitDurationMillis, easing = LinearEasing),
         ),
         label = "hero-segment-sweep",
     )
@@ -1588,7 +1637,9 @@ private fun HomeSelectorCard(
 @Composable
 private fun HomeStatusLine(
     state: MainUiState,
+    showLaneHint: Boolean,
 ) {
+    val homeLaneHint = state.runtimeSelection.homeStatusHint.takeIf { showLaneHint }
     val statusColor = when {
         state.runtimeSnapshot.phase == VpnRuntimePhase.FAIL_CLOSED ||
             state.egressObservation.phase == EgressObservationPhase.ERROR ->
@@ -1599,32 +1650,49 @@ private fun HomeStatusLine(
 
         else -> TunguskaTheme.mutedText
     }
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .testTag(UiTags.HOME_STATUS_LINE)
             .padding(top = 2.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(statusColor),
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        AnimatedContent(
-            targetState = homeEgressStatusLine(state),
-            transitionSpec = {
-                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(140))
-            },
-            label = "home-status-line",
-        ) { line ->
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(statusColor),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            AnimatedContent(
+                targetState = homeEgressStatusLine(state),
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(140))
+                },
+                label = "home-status-line",
+            ) { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = statusColor,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        homeLaneHint?.let { hint ->
             Text(
-                text = line,
-                style = MaterialTheme.typography.bodyMedium,
-                color = statusColor,
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.runtimeSnapshot.phase == VpnRuntimePhase.RUNNING) {
+                    TunguskaTheme.mutedText
+                } else {
+                    statusColor
+                },
                 textAlign = TextAlign.Center,
             )
         }
@@ -1635,8 +1703,12 @@ private fun HomeStatusLine(
 private fun ProfilesScreen(
     metrics: UiMetrics,
     state: MainUiState,
+    onOpenEditor: () -> Unit,
     onOpenImport: () -> Unit,
+    onOpenAdvancedDiagnostics: () -> Unit,
+    onUseRecommendedStrategy: (EmbeddedRuntimeStrategyId) -> Unit,
 ) {
+    val configuredSelection = state.configuredSelection
     SurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
@@ -1662,7 +1734,7 @@ private fun ProfilesScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                StatusChip(text = profileTypeLabel(), accent = TunguskaTheme.accent)
+                StatusChip(text = profileTypeLabel(state.profile), accent = TunguskaTheme.accent)
                 StatusChip(text = profileSealLabel(state), accent = profileSealAccent(state))
             }
             Text(
@@ -1675,19 +1747,479 @@ private fun ProfilesScreen(
                 onClick = onOpenImport,
                 modifier = Modifier.testTag(UiTags.OPEN_PROFILE_IMPORT_BUTTON),
             )
+            OutlinedButton(
+                onClick = onOpenEditor,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(UiTags.OPEN_PROFILE_EDITOR_BUTTON),
+                border = BorderStroke(1.dp, TunguskaTheme.stroke),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TunguskaTheme.accent),
+                shape = RoundedCornerShape(999.dp),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 13.dp),
+            ) {
+                Text("Open advanced editor")
+            }
+        }
+    }
+    SurfaceCard(
+        subtle = true,
+        accent = if (configuredSelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+            TunguskaTheme.accentDim
+        } else {
+            TunguskaTheme.warning
+        },
+        modifier = Modifier.testTag(UiTags.PROFILE_COMPATIBILITY_CARD),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Compatibility summary", style = MaterialTheme.typography.titleLarge)
+            CompatibilityLimitSummary(
+                title = configuredSelection.selectedSummaryTitle,
+                severity = configuredSelection.selectedSeverity,
+                details = configuredSelection.selectedSummaryDetails,
+                onOpenAdvancedDiagnostics = onOpenAdvancedDiagnostics,
+                recommendation = configuredSelection.recommendation,
+                textStyle = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(
+                    text = configuredSelection.selectedLaneLabel,
+                    accent = if (state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                        TunguskaTheme.accentDim
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                StatusChip(
+                    text = configuredSelection.statusLabel,
+                    accent = if (configuredSelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+                        TunguskaTheme.accent
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                configuredSelection.recommendedLaneLabel?.let { label ->
+                    StatusChip(
+                        text = label,
+                        accent = TunguskaTheme.warning,
+                    )
+                }
+            }
+            configuredSelection.recommendation?.let { recommendation ->
+                Text(
+                    text = recommendation,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TunguskaTheme.bodyText,
+                )
+            }
+            configuredSelection.recommendedStrategyId?.let { recommendedStrategyId ->
+                OutlinedButton(
+                    onClick = { onUseRecommendedStrategy(recommendedStrategyId) },
+                    modifier = Modifier.testTag(UiTags.USE_RECOMMENDED_STRATEGY_BUTTON),
+                    border = BorderStroke(1.dp, TunguskaTheme.stroke),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TunguskaTheme.accent),
+                    shape = RoundedCornerShape(999.dp),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 13.dp),
+                ) {
+                    Text(
+                        if (recommendedStrategyId == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                            "Use sing-box embedded"
+                        } else {
+                            "Use xray+tun2socks"
+                        },
+                    )
+                }
+            }
         }
     }
     SurfaceCard(subtle = true) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val outboundSummary = state.profile.outboundSummary
             Text("Technical details", style = MaterialTheme.typography.titleLarge)
-            DetailRow("Endpoint", "${state.profile.outbound.address}:${state.profile.outbound.port}")
-            DetailRow("Server name", state.profile.outbound.serverName)
+            DetailRow("Shape", outboundSummary.shapeLabel)
+            DetailRow("Protocol", outboundSummary.protocolLabel)
+            DetailRow("Transport", outboundSummary.transportLabel)
+            DetailRow("Security", outboundSummary.securityLabel)
+            DetailRow("Endpoint", "${outboundSummary.endpoint.address}:${outboundSummary.endpoint.port}")
+            DetailRow("Server name", outboundSummary.endpoint.serverName)
             DetailRow("Storage", state.profileStorage.backend)
             DetailRow("Canonical hash", abbreviateHash(state.profile.canonicalHash()))
             DetailRow("Sealed hash", abbreviateHash(state.profileStorage.persistedProfileHash ?: "pending"))
             DetailRow("Last sealed", state.profileStorage.lastPersistedAt ?: "Not sealed yet")
         }
     }
+}
+
+@Composable
+private fun ProfileEditorScreen(
+    metrics: UiMetrics,
+    state: MainUiState,
+    onOpenAdvancedDiagnostics: () -> Unit,
+    onSaveDraft: (ProfileEditorDraft) -> Unit,
+) {
+    var draft by remember(state.profile) { mutableStateOf(ProfileEditorDraft.fromProfile(state.profile)) }
+    val validationIssues = draft.validationIssues(state.profile)
+    val previewProfile = remember(draft, state.profile) { draft.previewProfile(state.profile) }
+    val editorSelection = remember(previewProfile, state.automationState.runtimeStrategy) {
+        configuredSelectionState(
+            profile = previewProfile,
+            selectedStrategyId = state.automationState.runtimeStrategy,
+        )
+    }
+    val editorGuidance = remember(previewProfile, state.automationState.runtimeStrategy) {
+        StrategyCapabilityRegistry.evaluateProfileGuidance(
+            profile = previewProfile,
+            strategyId = state.automationState.runtimeStrategy,
+        )
+    }
+    val dnsGuidance = editorGuidance.guidanceFor(ProfileGuidanceSection.DNS)
+    val vpnGuidance = editorGuidance.guidanceFor(ProfileGuidanceSection.VPN_POLICY)
+    val protocolSpecificEditorIntro = remember(state.profile) { state.profile.protocolSpecificEditorIntroSummary() }
+    val validationBody = if (validationIssues.size > 3) {
+        validationIssues.take(3).map { it.message } + "${validationIssues.size - 3} more issues remain."
+    } else {
+        validationIssues.map { it.message }
+    }
+
+    SurfaceCard(modifier = Modifier.testTag(UiTags.PROFILE_EDITOR_COMPATIBILITY_CARD)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Typed editor", style = MaterialTheme.typography.titleLarge)
+            Text(
+                protocolSpecificEditorIntro.supportingText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TunguskaTheme.mutedText,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(text = protocolSpecificEditorIntro.shapeChipLabel, accent = TunguskaTheme.accent)
+                StatusChip(
+                    text = if (state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                        "Editing for sing-box lane"
+                    } else {
+                        "Editing for xray+tun2socks lane"
+                    },
+                    accent = if (state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                        TunguskaTheme.accentDim
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                StatusChip(
+                    text = editorSelection.statusLabel,
+                    accent = if (editorSelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+                        TunguskaTheme.accent
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                editorSelection.recommendedLaneLabel?.let { label ->
+                    StatusChip(
+                        text = label,
+                        accent = TunguskaTheme.warning,
+                    )
+                }
+            }
+            CompatibilityLimitSummary(
+                title = editorSelection.selectedSummaryTitle,
+                severity = editorSelection.selectedSeverity,
+                details = editorSelection.selectedSummaryDetails,
+                onOpenAdvancedDiagnostics = onOpenAdvancedDiagnostics,
+                recommendation = editorSelection.recommendation,
+                color = TunguskaTheme.bodyText,
+            )
+            editorSelection.recommendation?.let { recommendation ->
+                SupportingNote(text = recommendation, color = TunguskaTheme.bodyText)
+            }
+            state.profileEditorStatus?.let { status ->
+                SupportingNote(text = status, color = TunguskaTheme.accent)
+            }
+            state.profileEditorError?.let { error ->
+                SupportingNote(text = error, color = TunguskaTheme.danger)
+            }
+        }
+    }
+
+    ProtocolSpecificOutboundShapeCard(profile = state.profile)
+
+    if (validationBody.isNotEmpty()) {
+        AttentionCard(
+            title = "Fix the draft before saving",
+            body = validationBody,
+            accent = TunguskaTheme.warning,
+        )
+    }
+
+    ResponsivePair(
+        metrics = metrics,
+        first = {
+            SurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Identity and endpoint", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(
+                        value = draft.name,
+                        onValueChange = { draft = draft.copy(name = it) },
+                        label = { Text("Profile name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    ProtocolSpecificEndpointEditorFields(
+                        profile = state.profile,
+                        draft = draft,
+                        onDraftChange = { updatedDraft -> draft = updatedDraft },
+                    )
+                }
+            }
+        },
+        second = {
+            ProtocolSpecificSecurityEditorCard(
+                profile = state.profile,
+                draft = draft,
+                onDraftChange = { updatedDraft -> draft = updatedDraft },
+            )
+        },
+    )
+
+    ProtocolSpecificTransportEditorCard(
+        profile = state.profile,
+        draft = draft,
+        metrics = metrics,
+        onDraftChange = { updatedDraft -> draft = updatedDraft },
+    )
+
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("DNS handling", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "Choose whether the tunnel uses system resolution, VPN-resolved DNS, or explicit encrypted upstreams.",
+            )
+            dnsGuidance?.let { guidance ->
+                ProfileEditorGuidanceCard(
+                    guidance = guidance,
+                    modifier = Modifier.testTag(UiTags.PROFILE_EDITOR_DNS_GUIDANCE_CARD),
+                )
+            }
+            Text("DNS mode", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+            ActionCluster(compact = metrics.compact) {
+                Button(
+                    onClick = { draft = draft.copy(dnsMode = ProfileEditorDnsMode.SYSTEM) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.dnsMode == ProfileEditorDnsMode.SYSTEM),
+                ) {
+                    Text("System DNS")
+                }
+                Button(
+                    onClick = {
+                        draft = draft.copy(
+                            dnsMode = ProfileEditorDnsMode.VPN,
+                            dnsEndpoints = draft.dnsEndpoints.ifBlank { defaultProfileEditorVpnDnsEndpoints() },
+                        )
+                    },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.dnsMode == ProfileEditorDnsMode.VPN),
+                ) {
+                    Text("VPN DNS")
+                }
+                Button(
+                    onClick = {
+                        draft = draft.copy(
+                            dnsMode = ProfileEditorDnsMode.CUSTOM,
+                            dnsEndpoints = draft.dnsEndpoints.ifBlank { defaultProfileEditorCustomDnsEndpoints(draft.dnsEncryptedKind) },
+                        )
+                    },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.dnsMode == ProfileEditorDnsMode.CUSTOM),
+                ) {
+                    Text("Custom encrypted")
+                }
+            }
+            if (draft.dnsMode == ProfileEditorDnsMode.CUSTOM) {
+                Text("Encrypted DNS kind", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+                ActionCluster(compact = metrics.compact) {
+                    Button(
+                        onClick = {
+                            draft = draft.copy(
+                                dnsEncryptedKind = ProfileEditorEncryptedDnsKind.DOH,
+                                dnsEndpoints = draft.dnsEndpoints.ifBlank { defaultProfileEditorCustomDnsEndpoints(ProfileEditorEncryptedDnsKind.DOH) },
+                            )
+                        },
+                        modifier = actionButtonModifier(metrics),
+                        colors = buttonColorsForSelection(active = draft.dnsEncryptedKind == ProfileEditorEncryptedDnsKind.DOH),
+                    ) {
+                        Text("DoH")
+                    }
+                    Button(
+                        onClick = {
+                            draft = draft.copy(
+                                dnsEncryptedKind = ProfileEditorEncryptedDnsKind.DOT,
+                                dnsEndpoints = draft.dnsEndpoints.ifBlank { defaultProfileEditorCustomDnsEndpoints(ProfileEditorEncryptedDnsKind.DOT) },
+                            )
+                        },
+                        modifier = actionButtonModifier(metrics),
+                        colors = buttonColorsForSelection(active = draft.dnsEncryptedKind == ProfileEditorEncryptedDnsKind.DOT),
+                    ) {
+                        Text("DoT")
+                    }
+                }
+            }
+            if (draft.dnsMode != ProfileEditorDnsMode.SYSTEM) {
+                OutlinedTextField(
+                    value = draft.dnsEndpoints,
+                    onValueChange = { draft = draft.copy(dnsEndpoints = it) },
+                    label = {
+                        Text(
+                            if (draft.dnsMode == ProfileEditorDnsMode.VPN) {
+                                "Resolver endpoints"
+                            } else {
+                                "Encrypted DNS endpoints"
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    supportingText = {
+                        Text("Enter one endpoint per line. Comma-separated values also work.")
+                    },
+                )
+            }
+        }
+    }
+
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("VPN policy", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "Choose whether all apps use the tunnel, only selected apps use it, or selected apps stay direct.",
+            )
+            vpnGuidance?.let { guidance ->
+                ProfileEditorGuidanceCard(
+                    guidance = guidance,
+                    modifier = Modifier.testTag(UiTags.PROFILE_EDITOR_VPN_POLICY_GUIDANCE_CARD),
+                )
+            }
+            Text("Split-tunnel mode", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+            ActionCluster(compact = metrics.compact) {
+                Button(
+                    onClick = { draft = draft.copy(splitTunnelMode = ProfileEditorSplitTunnelMode.FULL) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.splitTunnelMode == ProfileEditorSplitTunnelMode.FULL),
+                ) {
+                    Text("Full tunnel")
+                }
+                Button(
+                    onClick = { draft = draft.copy(splitTunnelMode = ProfileEditorSplitTunnelMode.ALLOWLIST) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.splitTunnelMode == ProfileEditorSplitTunnelMode.ALLOWLIST),
+                ) {
+                    Text("Allowlist")
+                }
+                Button(
+                    onClick = { draft = draft.copy(splitTunnelMode = ProfileEditorSplitTunnelMode.DENYLIST) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.splitTunnelMode == ProfileEditorSplitTunnelMode.DENYLIST),
+                ) {
+                    Text("Denylist")
+                }
+            }
+            if (draft.splitTunnelMode != ProfileEditorSplitTunnelMode.FULL) {
+                OutlinedTextField(
+                    value = draft.splitTunnelPackages,
+                    onValueChange = { draft = draft.copy(splitTunnelPackages = it) },
+                    label = {
+                        Text(
+                            if (draft.splitTunnelMode == ProfileEditorSplitTunnelMode.ALLOWLIST) {
+                                "Allowed Android packages"
+                            } else {
+                                "Excluded Android packages"
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    supportingText = {
+                        Text("Enter one package per line. Comma-separated values also work.")
+                    },
+                )
+            }
+        }
+    }
+
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Routing defaults", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "This sets the fallback action for traffic not matched by explicit rules. Detailed rule editing stays in the Routing section for now.",
+            )
+            Text("Fallback traffic action", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+            ActionCluster(compact = metrics.compact) {
+                Button(
+                    onClick = { draft = draft.copy(defaultRouteAction = RouteAction.PROXY) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.defaultRouteAction == RouteAction.PROXY),
+                ) {
+                    Text("Proxy")
+                }
+                Button(
+                    onClick = { draft = draft.copy(defaultRouteAction = RouteAction.DIRECT) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.defaultRouteAction == RouteAction.DIRECT),
+                ) {
+                    Text("Direct")
+                }
+                Button(
+                    onClick = { draft = draft.copy(defaultRouteAction = RouteAction.BLOCK) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.defaultRouteAction == RouteAction.BLOCK),
+                ) {
+                    Text("Block")
+                }
+            }
+            DetailRow("Existing explicit rules", state.profile.routing.rules.size.toString())
+        }
+    }
+
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Safety guards", style = MaterialTheme.typography.titleLarge)
+            ProfileEditorToggleRow(
+                title = "Safe mode",
+                detail = "Keep the runtime on the fail-closed path and suppress unsafe local helper surfaces.",
+                checked = draft.safeMode,
+                onCheckedChange = { enabled ->
+                    draft = draft.copy(
+                        safeMode = enabled,
+                        compatibilityLocalProxy = if (enabled) false else draft.compatibilityLocalProxy,
+                        debugEndpointsEnabled = if (enabled) false else draft.debugEndpointsEnabled,
+                    )
+                },
+            )
+            ProfileEditorToggleRow(
+                title = "Compatibility local proxy",
+                detail = "Expose the compatibility listener only when you explicitly need a local bridge for debugging or legacy workflows.",
+                checked = draft.compatibilityLocalProxy,
+                enabled = !draft.safeMode,
+                onCheckedChange = { enabled -> draft = draft.copy(compatibilityLocalProxy = enabled) },
+            )
+            ProfileEditorToggleRow(
+                title = "Debug endpoints",
+                detail = "Keep runtime diagnostic endpoints off unless active operational work requires them.",
+                checked = draft.debugEndpointsEnabled,
+                enabled = !draft.safeMode,
+                onCheckedChange = { enabled -> draft = draft.copy(debugEndpointsEnabled = enabled) },
+            )
+        }
+    }
+
+    PrimaryActionButton(
+        text = "Save advanced changes",
+        onClick = { onSaveDraft(draft) },
+        modifier = Modifier.testTag(UiTags.PROFILE_EDITOR_SAVE_BUTTON),
+        enabled = validationIssues.isEmpty(),
+    )
 }
 
 @Composable
@@ -1699,6 +2231,8 @@ private fun ProfileImportScreen(
     onDiscardImport: () -> Unit,
     onQrPayloadDetected: (String, ImportCaptureSource) -> Unit,
     onImportError: (String) -> Unit,
+    onUseRecommendedStrategy: (EmbeddedRuntimeStrategyId) -> Unit,
+    onOpenAdvancedDiagnostics: () -> Unit,
 ) {
     val stageText = if (state.importPreview == null) "Step 1 of 2" else "Step 2 of 2"
     StatusChip(text = stageText, accent = TunguskaTheme.accent)
@@ -1710,6 +2244,8 @@ private fun ProfileImportScreen(
         onDiscardImport = onDiscardImport,
         onQrPayloadDetected = onQrPayloadDetected,
         onImportError = onImportError,
+        onUseRecommendedStrategy = onUseRecommendedStrategy,
+        onOpenAdvancedDiagnostics = onOpenAdvancedDiagnostics,
     )
 }
 
@@ -2038,6 +2574,9 @@ private fun SecurityScreen(
     onOpenAutomation: () -> Unit,
     onOpenAdvancedDiagnostics: () -> Unit,
 ) {
+    val connectDecision = state.connectDecision
+    val securitySelection = state.runtimeSelection
+    val securityLaneStrategy = securitySelection.activeStrategyId ?: securitySelection.configuredStrategyId
     SurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Security posture", style = MaterialTheme.typography.titleLarge)
@@ -2059,8 +2598,55 @@ private fun SecurityScreen(
                 StatusChip(text = trustAuditChipText(state), accent = trustAuditChipAccent(state))
                 StatusChip(text = trustEngineChipText(state), accent = trustEngineChipAccent(state))
             }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(
+                    text = securitySelection.activeLaneLabel,
+                    accent = if (securityLaneStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                        TunguskaTheme.accentDim
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                StatusChip(
+                    text = securitySelection.statusLabel,
+                    accent = if (securitySelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+                        TunguskaTheme.accent
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                securitySelection.recommendedLaneLabel?.let { label ->
+                    StatusChip(
+                        text = label,
+                        accent = TunguskaTheme.warning,
+                    )
+                }
+            }
+            connectDecision?.let { decision ->
+                SupportingNote(
+                    text = decision.message,
+                    color = when (decision.phase) {
+                        ConnectDecisionPhase.STARTING -> TunguskaTheme.warning
+                        ConnectDecisionPhase.STARTED -> TunguskaTheme.accent
+                        ConnectDecisionPhase.FAILED -> TunguskaTheme.danger
+                    },
+                )
+            }
+            securitySelection.restageHint?.let { hint ->
+                SupportingNote(text = hint)
+            }
             state.controlError?.let { error ->
-                SupportingNote(text = error, color = TunguskaTheme.danger)
+                SupportingNote(
+                    text = runtimeFailureDisplayText(
+                        rawError = error,
+                        section = state.runtimeSnapshot.lastErrorSection,
+                        fieldPath = state.runtimeSnapshot.lastErrorFieldPath,
+                    ) ?: error,
+                    color = TunguskaTheme.danger,
+                )
             }
         }
     }
@@ -2117,6 +2703,11 @@ private fun AutomationScreen(
     onCopyToken: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val lastAutomationError = runtimeFailureDisplayText(
+        rawError = state.lastAutomationError,
+        section = state.lastAutomationErrorSection,
+        fieldPath = state.lastAutomationErrorFieldPath,
+    )
     SurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
@@ -2143,12 +2734,19 @@ private fun AutomationScreen(
             }
             DetailListCard(
                 title = "Automation status",
-                rows = listOf(
-                    "VPN permission" to if (state.vpnPermissionReady) "granted" else "required",
-                    "Token" to (state.tokenPreview ?: "not generated"),
-                    "Last automation result" to state.lastAutomationStatus,
-                    "Last caller hint" to (state.lastCallerHint ?: "none"),
-                ),
+                rows = buildList {
+                    add("VPN permission" to if (state.vpnPermissionReady) "granted" else "required")
+                    add("Token" to (state.tokenPreview ?: "not generated"))
+                    add("Last automation result" to state.lastAutomationStatus)
+                    state.lastAutomationRuntimeMetadata?.laneLabel?.let { add("Last runtime lane" to it) }
+                    state.lastAutomationRuntimeMetadata?.connectDecisionSummary?.let {
+                        add("Last lane decision" to it)
+                    }
+                    lastAutomationError?.let { add("Last automation error" to it) }
+                    state.lastAutomationErrorSection?.let { add("Last error section" to it) }
+                    state.lastAutomationErrorFieldPath?.let { add("Last error field path" to it) }
+                    add("Last caller hint" to (state.lastCallerHint ?: "none"))
+                },
             )
         }
     }
@@ -2199,6 +2797,26 @@ private fun AdvancedDiagnosticsScreen(
     onReloadProfile: () -> Unit,
     onResealProfile: () -> Unit,
 ) {
+    val connectDecision = state.connectDecision
+    val diagnosticsSelection = state.runtimeSelection
+    val diagnosticsStrategy = diagnosticsSelection.activeStrategyId ?: diagnosticsSelection.configuredStrategyId
+    val capabilityProfile = remember(state.automationState.runtimeStrategy) {
+        StrategyCapabilityRegistry.profileFor(state.automationState.runtimeStrategy)
+    }
+    val capabilitySummaryBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
+    val runtimeFailureRows = remember(
+        state.controlError,
+        state.runtimeSnapshot.lastError,
+        state.runtimeSnapshot.lastErrorSection,
+        state.runtimeSnapshot.lastErrorFieldPath,
+    ) {
+        runtimeFailureDiagnosticsRows(
+            rawError = state.controlError ?: state.runtimeSnapshot.lastError,
+            section = state.runtimeSnapshot.lastErrorSection,
+            fieldPath = state.runtimeSnapshot.lastErrorFieldPath,
+        )
+    }
     SurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Runtime controls", style = MaterialTheme.typography.titleLarge)
@@ -2211,7 +2829,7 @@ private fun AdvancedDiagnosticsScreen(
                 Button(
                     onClick = { onRuntimeStrategyChange(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS) },
                     modifier = actionButtonModifier(metrics).testTag(UiTags.RUNTIME_STRATEGY_XRAY_BUTTON),
-                    colors = buttonColorsForStrategy(
+                    colors = buttonColorsForSelection(
                         active = state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
                     ),
                 ) {
@@ -2220,7 +2838,7 @@ private fun AdvancedDiagnosticsScreen(
                 Button(
                     onClick = { onRuntimeStrategyChange(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) },
                     modifier = actionButtonModifier(metrics).testTag(UiTags.RUNTIME_STRATEGY_SINGBOX_BUTTON),
-                    colors = buttonColorsForStrategy(
+                    colors = buttonColorsForSelection(
                         active = state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
                     ),
                 ) {
@@ -2245,21 +2863,60 @@ private fun AdvancedDiagnosticsScreen(
             }
         }
     }
+    key(UiTags.STRATEGY_CAPABILITY_SUMMARY_CARD) {
+        StrategyCapabilitySummaryCard(
+            capabilityProfile = capabilityProfile,
+            bringIntoViewRequester = capabilitySummaryBringIntoViewRequester,
+        )
+    }
+    key(UiTags.RUNTIME_LANE_SUMMARY_CARD) {
+        RuntimeLaneSummaryCard(
+            diagnosticsSelection = diagnosticsSelection,
+            diagnosticsStrategy = diagnosticsStrategy,
+            connectDecision = connectDecision,
+            onInfoClick = {
+                coroutineScope.launch {
+                    capabilitySummaryBringIntoViewRequester.bringIntoView()
+                }
+            },
+        )
+    }
     DetailListCard(
         title = "Runtime internals",
-        rows = listOf(
-            "Payload bytes" to state.runtimeSnapshot.compiledPayloadBytes.toString(),
-            "Strategy" to (state.runtimeSnapshot.activeStrategy?.name ?: "n/a"),
-            "Bridge port" to (state.runtimeSnapshot.bridgePort?.toString() ?: "0"),
-            "xray pid" to (state.runtimeSnapshot.xrayPid?.toString() ?: "0"),
-            "tun2socks pid" to (state.runtimeSnapshot.tun2socksPid?.toString() ?: "0"),
-            "Routed traffic observed" to state.runtimeSnapshot.routedTrafficObserved.toString(),
-            "DNS failure observed" to state.runtimeSnapshot.dnsFailureObserved.toString(),
-            "MTU" to (state.runtimeSnapshot.mtu?.toString() ?: "0"),
-            "Last exposure check" to formatTimestamp(state.runtimeSnapshot.lastAuditAtEpochMs),
-            "Bootstrap summary" to (state.runtimeSnapshot.lastBootstrapSummary ?: "none"),
-            "Health summary" to (state.runtimeSnapshot.lastEngineHealthSummary ?: "none"),
-        ),
+        rows = buildList {
+            add("Payload bytes" to state.runtimeSnapshot.compiledPayloadBytes.toString())
+            add("Strategy" to (state.runtimeSnapshot.activeStrategy?.name ?: "n/a"))
+            add(
+                "Compiler path" to (
+                    state.runtimeSnapshot.runtimeConfigSource
+                        ?.let(::runtimeConfigSourceLabel)
+                        ?: "n/a"
+                ),
+            )
+            state.runtimeSnapshot.configuredRuntimeConfigSource
+                ?.takeIf {
+                    state.runtimeSnapshot.activeStrategy == null ||
+                        state.runtimeSnapshot.configuredStrategy != state.runtimeSnapshot.activeStrategy ||
+                        it != state.runtimeSnapshot.runtimeConfigSource
+                }
+                ?.let { nextStartCompilerPath ->
+                    add("Next-start compiler path" to runtimeConfigSourceLabel(nextStartCompilerPath))
+                }
+            add("Profile shape" to (state.runtimeSnapshot.profileShapeLabel() ?: "n/a"))
+            add("Profile protocol" to (state.runtimeSnapshot.profileProtocolId?.displayLabel() ?: "n/a"))
+            add("Profile transport" to (state.runtimeSnapshot.profileTransportId?.displayLabel() ?: "n/a"))
+            add("Profile security" to (state.runtimeSnapshot.profileSecurityId?.displayLabel() ?: "n/a"))
+            add("Bridge port" to (state.runtimeSnapshot.bridgePort?.toString() ?: "0"))
+            add("xray pid" to (state.runtimeSnapshot.xrayPid?.toString() ?: "0"))
+            add("tun2socks pid" to (state.runtimeSnapshot.tun2socksPid?.toString() ?: "0"))
+            add("Routed traffic observed" to state.runtimeSnapshot.routedTrafficObserved.toString())
+            add("DNS failure observed" to state.runtimeSnapshot.dnsFailureObserved.toString())
+            add("MTU" to (state.runtimeSnapshot.mtu?.toString() ?: "0"))
+            add("Last exposure check" to formatTimestamp(state.runtimeSnapshot.lastAuditAtEpochMs))
+            add("Bootstrap summary" to (state.runtimeSnapshot.lastBootstrapSummary ?: "none"))
+            add("Health summary" to (state.runtimeSnapshot.lastEngineHealthSummary ?: "none"))
+            addAll(runtimeFailureRows)
+        },
     )
     ResponsivePair(
         metrics = metrics,
@@ -2514,6 +3171,165 @@ private fun SummaryEntryCard(
 }
 
 @Composable
+private fun StrategyCapabilitySummaryCard(
+    capabilityProfile: StrategyCapabilityProfile,
+    bringIntoViewRequester: BringIntoViewRequester,
+) {
+    SurfaceCard(
+        subtle = true,
+        accent = TunguskaTheme.accentDim,
+        modifier = Modifier
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .testTag(UiTags.STRATEGY_CAPABILITY_SUMMARY_CARD),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Strategy capability summary", style = MaterialTheme.typography.titleLarge)
+            Text(
+                capabilityProfile.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                capabilityProfile.summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TunguskaTheme.mutedText,
+            )
+            capabilityProfile.capabilityMatrix.features.forEach { support ->
+                CapabilitySupportRow(support = support)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeLaneSummaryCard(
+    diagnosticsSelection: RuntimeSelectionState,
+    diagnosticsStrategy: EmbeddedRuntimeStrategyId,
+    connectDecision: ConnectDecisionState?,
+    onInfoClick: () -> Unit,
+) {
+    SurfaceCard(
+        subtle = true,
+        accent = if (diagnosticsSelection.selectedSeverity == StrategyCompatibilitySeverity.READY && diagnosticsSelection.nextRestageLaneLabel == null) {
+            TunguskaTheme.accentDim
+        } else {
+            TunguskaTheme.warning
+        },
+        modifier = Modifier.testTag(UiTags.RUNTIME_LANE_SUMMARY_CARD),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Runtime lane summary", style = MaterialTheme.typography.titleLarge)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(
+                    text = diagnosticsSelection.activeLaneLabel,
+                    accent = if (diagnosticsStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                        TunguskaTheme.accentDim
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                diagnosticsSelection.nextRestageLaneLabel?.let { label ->
+                    StatusChip(
+                        text = label,
+                        accent = TunguskaTheme.accent,
+                    )
+                }
+                StatusChip(
+                    text = diagnosticsSelection.statusLabel,
+                    accent = if (diagnosticsSelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+                        TunguskaTheme.accent
+                    } else {
+                        TunguskaTheme.warning
+                    },
+                )
+                diagnosticsSelection.recommendedLaneLabel?.let { label ->
+                    StatusChip(
+                        text = label,
+                        accent = TunguskaTheme.warning,
+                    )
+                }
+            }
+            CompatibilityLimitSummary(
+                title = diagnosticsSelection.selectedSummaryTitle,
+                severity = diagnosticsSelection.selectedSeverity,
+                details = diagnosticsSelection.selectedSummaryDetails,
+                onInfoClick = onInfoClick,
+                infoButtonTag = UiTags.RUNTIME_LANE_SUMMARY_INFO_BUTTON,
+                recommendation = diagnosticsSelection.recommendation,
+                textStyle = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            diagnosticsSelection.recommendation?.let { recommendation ->
+                Text(
+                    recommendation,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TunguskaTheme.bodyText,
+                )
+            }
+            connectDecision?.let { decision ->
+                Text(
+                    decision.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when (decision.phase) {
+                        ConnectDecisionPhase.STARTING -> TunguskaTheme.warning
+                        ConnectDecisionPhase.STARTED -> TunguskaTheme.accent
+                        ConnectDecisionPhase.FAILED -> TunguskaTheme.danger
+                    },
+                )
+            }
+            diagnosticsSelection.nextStartDetail?.let { nextStartDetail ->
+                Text(
+                    "Next-start lane",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TunguskaTheme.mutedText,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StatusChip(
+                        text = nextStartDetail.statusLabel,
+                        accent = if (nextStartDetail.statusLabel == "Clean match") {
+                            TunguskaTheme.accent
+                        } else {
+                            TunguskaTheme.warning
+                        },
+                    )
+                    nextStartDetail.recommendedLaneLabel?.let { label ->
+                        StatusChip(
+                            text = label,
+                            accent = TunguskaTheme.warning,
+                        )
+                    }
+                }
+                Text(
+                    nextStartDetail.summaryTitle,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                nextStartDetail.recommendation?.let { recommendation ->
+                    Text(
+                        recommendation,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunguskaTheme.bodyText,
+                    )
+                }
+            }
+            diagnosticsSelection.restageHint?.let { hint ->
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TunguskaTheme.mutedText,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AttentionCard(
     title: String,
     body: List<String>,
@@ -2652,9 +3468,100 @@ private fun SupportingNote(
 }
 
 @Composable
+internal fun CompatibilityLimitSummary(
+    title: String,
+    severity: StrategyCompatibilitySeverity,
+    details: List<String>,
+    onInfoClick: (() -> Unit)? = null,
+    infoButtonTag: String? = null,
+    onOpenAdvancedDiagnostics: (() -> Unit)? = null,
+    recommendation: String? = null,
+    modifier: Modifier = Modifier,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    var showLimitDetails by rememberSaveable(title, details, recommendation) { mutableStateOf(false) }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = textStyle,
+            color = color,
+            modifier = Modifier.weight(1f),
+        )
+        if (severity == StrategyCompatibilitySeverity.ATTENTION && details.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .then(if (infoButtonTag != null) Modifier.testTag(infoButtonTag) else Modifier)
+                    .clip(CircleShape)
+                    .border(
+                        width = 1.dp,
+                        color = TunguskaTheme.warning.copy(alpha = 0.42f),
+                        shape = CircleShape,
+                    )
+                    .background(TunguskaTheme.warning.copy(alpha = 0.12f))
+                    .clickable {
+                        if (onInfoClick != null) {
+                            onInfoClick()
+                        } else {
+                            showLimitDetails = true
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "i",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TunguskaTheme.warning,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+    if (showLimitDetails) {
+        AlertDialog(
+            onDismissRequest = { showLimitDetails = false },
+            title = {
+                Text("Engine limits", style = MaterialTheme.typography.titleLarge)
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        "Click to see more in Security.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunguskaTheme.bodyText,
+                    )
+                    if (onOpenAdvancedDiagnostics != null) {
+                        TextButton(onClick = {
+                            showLimitDetails = false
+                            onOpenAdvancedDiagnostics()
+                        }) {
+                            Text("Open Security diagnostics")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLimitDetails = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+}
+
+@Composable
 private fun StatusChip(
     text: String,
     accent: Color,
+    onClick: (() -> Unit)? = null,
 ) {
     Surface(
         shape = RoundedCornerShape(999.dp),
@@ -2662,7 +3569,9 @@ private fun StatusChip(
         border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -2750,10 +3659,359 @@ private fun actionButtonModifier(metrics: UiMetrics): Modifier =
     if (metrics.compact) Modifier.fillMaxWidth() else Modifier
 
 @Composable
-private fun buttonColorsForStrategy(active: Boolean) = ButtonDefaults.buttonColors(
+private fun buttonColorsForSelection(active: Boolean) = ButtonDefaults.buttonColors(
     containerColor = if (active) TunguskaTheme.accent.copy(alpha = 0.18f) else TunguskaTheme.surfaceStrong,
     contentColor = if (active) TunguskaTheme.accent else TunguskaTheme.bodyText,
 )
+
+private data class ProtocolSpecificEditorIntroSummary(
+    val shapeChipLabel: String,
+    val supportingText: String,
+)
+
+private fun ProfileIr.protocolSpecificEditorIntroSummary(): ProtocolSpecificEditorIntroSummary = when (outboundProtocolId) {
+    OutboundProtocolId.VLESS_REALITY -> ProtocolSpecificEditorIntroSummary(
+        shapeChipLabel = outboundSummary.shapeLabel,
+        supportingText = "Import and QR stay the fastest path. Use this lane when you need to tune the active ${outboundSummary.shapeLabel} shape without replacing the whole payload.",
+    )
+}
+
+@Composable
+private fun ProtocolSpecificOutboundShapeCard(profile: ProfileIr) {
+    when (profile.outboundProtocolId) {
+        OutboundProtocolId.VLESS_REALITY -> VlessRealityOutboundShapeCard(profile = profile)
+    }
+}
+
+@Composable
+private fun VlessRealityOutboundShapeCard(profile: ProfileIr) {
+    val outboundSummary = profile.outboundSummary
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Current outbound shape", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "The editor shell stays protocol-agnostic below, but the transport and security fields in this section are specific to the active ${outboundSummary.shapeLabel} shape.",
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(text = outboundSummary.protocolLabel, accent = TunguskaTheme.accent)
+                StatusChip(text = outboundSummary.transportLabel, accent = TunguskaTheme.accentDim)
+                StatusChip(text = outboundSummary.securityLabel, accent = TunguskaTheme.warning)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProtocolSpecificEndpointEditorFields(
+    profile: ProfileIr,
+    draft: ProfileEditorDraft,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    when (profile.outboundProtocolId) {
+        OutboundProtocolId.VLESS_REALITY -> VlessRealityEndpointEditorFields(
+            shapeLabel = profile.outboundShapeLabel(),
+            draft = draft,
+            onDraftChange = onDraftChange,
+        )
+    }
+}
+
+@Composable
+private fun VlessRealityEndpointEditorFields(
+    shapeLabel: String,
+    draft: ProfileEditorDraft,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    SupportingNote(
+        text = "These endpoint fields are specific to the active $shapeLabel shape and stay routed here until a second outbound family needs its own inputs.",
+    )
+    OutlinedTextField(
+        value = draft.address,
+        onValueChange = { onDraftChange(draft.copy(address = it)) },
+        label = { Text("Server address") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+    OutlinedTextField(
+        value = draft.port,
+        onValueChange = { onDraftChange(draft.copy(port = it)) },
+        label = { Text("Port") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+    )
+    OutlinedTextField(
+        value = draft.serverName,
+        onValueChange = { onDraftChange(draft.copy(serverName = it)) },
+        label = { Text("Server name") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+}
+
+@Composable
+private fun ProtocolSpecificSecurityEditorCard(
+    profile: ProfileIr,
+    draft: ProfileEditorDraft,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    when (profile.outboundProtocolId) {
+        OutboundProtocolId.VLESS_REALITY -> VlessRealitySecurityEditorCard(
+            shapeLabel = profile.outboundShapeLabel(),
+            draft = draft,
+            onDraftChange = onDraftChange,
+        )
+    }
+}
+
+@Composable
+private fun ProtocolSpecificTransportEditorCard(
+    profile: ProfileIr,
+    draft: ProfileEditorDraft,
+    metrics: UiMetrics,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    when (profile.outboundProtocolId) {
+        OutboundProtocolId.VLESS_REALITY -> VlessRealityTransportEditorCard(
+            shapeLabel = profile.outboundShapeLabel(),
+            draft = draft,
+            metrics = metrics,
+            onDraftChange = onDraftChange,
+        )
+    }
+}
+
+@Composable
+private fun VlessRealitySecurityEditorCard(
+    shapeLabel: String,
+    draft: ProfileEditorDraft,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Current shape security", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "These inputs are specific to the current $shapeLabel shape and will be the first fields to move behind a protocol-specific editor when more outbound families land.",
+            )
+            OutlinedTextField(
+                value = draft.uuid,
+                onValueChange = { onDraftChange(draft.copy(uuid = it)) },
+                label = { Text("UUID") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = draft.realityPublicKey,
+                onValueChange = { onDraftChange(draft.copy(realityPublicKey = it)) },
+                label = { Text("REALITY public key") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = draft.realityShortId,
+                onValueChange = { onDraftChange(draft.copy(realityShortId = it)) },
+                label = { Text("REALITY short id") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = draft.realitySpiderX,
+                onValueChange = { onDraftChange(draft.copy(realitySpiderX = it)) },
+                label = { Text("REALITY spider path") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VlessRealityTransportEditorCard(
+    shapeLabel: String,
+    draft: ProfileEditorDraft,
+    metrics: UiMetrics,
+    onDraftChange: (ProfileEditorDraft) -> Unit,
+) {
+    val fingerprintChoices = remember(draft.utlsFingerprint) {
+        buildList {
+            addAll(PROFILE_EDITOR_UTLS_FINGERPRINT_CHOICES)
+            if (draft.utlsFingerprint !in this) {
+                add(draft.utlsFingerprint)
+            }
+        }
+    }
+    SurfaceCard {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Current shape transport", style = MaterialTheme.typography.titleLarge)
+            SupportingNote(
+                text = "These controls are still specific to the active $shapeLabel shape. Flow is constrained to the only accepted v1 value, and the fingerprint picker stays typed unless you imported a custom value.",
+            )
+            Text("VLESS flow", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+            ActionCluster(compact = metrics.compact) {
+                Button(
+                    onClick = { onDraftChange(draft.copy(flowEnabled = true)) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = draft.flowEnabled),
+                ) {
+                    Text(REQUIRED_VLESS_FLOW)
+                }
+                Button(
+                    onClick = { onDraftChange(draft.copy(flowEnabled = false)) },
+                    modifier = actionButtonModifier(metrics),
+                    colors = buttonColorsForSelection(active = !draft.flowEnabled),
+                ) {
+                    Text("Unset")
+                }
+            }
+            Text("uTLS fingerprint", style = MaterialTheme.typography.labelLarge, color = TunguskaTheme.mutedText)
+            ActionCluster(compact = metrics.compact) {
+                fingerprintChoices.forEach { fingerprint ->
+                    Button(
+                        onClick = { onDraftChange(draft.copy(utlsFingerprint = fingerprint)) },
+                        modifier = actionButtonModifier(metrics),
+                        colors = buttonColorsForSelection(active = draft.utlsFingerprint == fingerprint),
+                    ) {
+                        Text(fingerprint)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileEditorToggleRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) TunguskaTheme.mutedText else TunguskaTheme.mutedText.copy(alpha = 0.68f),
+            )
+        }
+        Switch(
+            checked = checked,
+            enabled = enabled,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Composable
+private fun ProfileEditorGuidanceCard(
+    guidance: ProfileSectionGuidance,
+    modifier: Modifier = Modifier,
+) {
+    AttentionCard(
+        title = guidance.title,
+        body = guidance.details,
+        accent = if (guidance.severity == StrategyCompatibilitySeverity.READY) {
+            TunguskaTheme.accentDim
+        } else {
+            TunguskaTheme.warning
+        },
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun CapabilitySupportRow(
+    support: EngineCapabilitySupport,
+) {
+    val expandable = support.state != EngineCapabilitySupportState.SUPPORTED
+    var detailsExpanded by rememberSaveable(support.feature, support.state, support.summary) { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = support.feature.label,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            StatusChip(
+                text = capabilityStateLabel(support.state),
+                accent = capabilityStateAccent(support.state),
+                onClick = if (expandable) {
+                    { detailsExpanded = !detailsExpanded }
+                } else {
+                    null
+                },
+            )
+        }
+        if (support.state == EngineCapabilitySupportState.SUPPORTED) {
+            Text(
+                text = support.summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TunguskaTheme.mutedText,
+            )
+        } else if (detailsExpanded) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = capabilityStateAccent(support.state).copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, capabilityStateAccent(support.state).copy(alpha = 0.22f)),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = if (support.state == EngineCapabilitySupportState.UNSUPPORTED) {
+                            "Technical block"
+                        } else {
+                            "Technical limit"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = capabilityStateAccent(support.state),
+                    )
+                    Text(
+                        text = support.summary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunguskaTheme.bodyText,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun capabilityStateLabel(state: EngineCapabilitySupportState): String = when (state) {
+    EngineCapabilitySupportState.SUPPORTED -> "Supported"
+    EngineCapabilitySupportState.SUPPORTED_WITH_LIMITS -> "Supported with limits"
+    EngineCapabilitySupportState.DEGRADED_ON_FALLBACK -> "Degraded on fallback"
+    EngineCapabilitySupportState.UNSUPPORTED -> "Unsupported"
+}
+
+private fun capabilityStateAccent(state: EngineCapabilitySupportState): Color = when (state) {
+    EngineCapabilitySupportState.SUPPORTED -> TunguskaTheme.accent
+    EngineCapabilitySupportState.SUPPORTED_WITH_LIMITS -> TunguskaTheme.warning
+    EngineCapabilitySupportState.DEGRADED_ON_FALLBACK -> TunguskaTheme.warning
+    EngineCapabilitySupportState.UNSUPPORTED -> TunguskaTheme.danger
+}
 
 private enum class AppGlyph {
     HOME,
@@ -3082,14 +4340,15 @@ private fun InfoHint(text: String) {
 
 private fun formatTimestamp(epochMs: Long?): String = epochMs?.let { java.time.Instant.ofEpochMilli(it).toString() } ?: "n/a"
 
-private fun runtimeStrategyLabel(strategy: EmbeddedRuntimeStrategyId): String = when (strategy) {
-    EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> "Xray + tun2socks"
-    EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "Sing-box embedded"
-}
-
 private fun runtimeStrategyShortLabel(strategy: EmbeddedRuntimeStrategyId): String = when (strategy) {
     EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> "Engine: Xray"
     EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "Engine: Sing-box"
+}
+
+@Immutable
+private enum class HeroBackdropMode {
+    PARTICLE_FLOW,
+    PLASMA_FIELD,
 }
 
 @Immutable
@@ -3099,6 +4358,7 @@ private data class HeroVisual(
     val orbitDurationMillis: Int,
     val breathDurationMillis: Int,
     val pulseDurationMillis: Int,
+    val segmentOrbitDurationMillis: Int,
     val outerScale: Float,
     val coreScale: Float,
     val glowAlpha: Float,
@@ -3110,6 +4370,17 @@ private data class HeroVisual(
     val secondarySweep: Float,
     val ringStrokeScale: Float,
     val coreDiameterScale: Float,
+    val backdropMode: HeroBackdropMode,
+    val backdropScale: Float,
+    val backdropAlpha: Float,
+    val backdropEnergy: Float,
+    val backdropPulseMin: Float,
+    val backdropPulseMax: Float,
+    val backdropInstability: Float,
+    val burstEnabled: Boolean,
+    val burstScale: Float,
+    val burstIntensity: Float,
+    val burstDurationMillis: Int,
 )
 
 private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
@@ -3119,6 +4390,7 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         orbitDurationMillis = 30_000,
         breathDurationMillis = 8_200,
         pulseDurationMillis = 7_200,
+        segmentOrbitDurationMillis = 34_000,
         outerScale = 1.008f,
         coreScale = 0.9f,
         glowAlpha = 0.08f,
@@ -3130,6 +4402,17 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         secondarySweep = 0f,
         ringStrokeScale = 0.74f,
         coreDiameterScale = 0.42f,
+        backdropMode = HeroBackdropMode.PARTICLE_FLOW,
+        backdropScale = 1.68f,
+        backdropAlpha = 0.28f,
+        backdropEnergy = 0.32f,
+        backdropPulseMin = 0.84f,
+        backdropPulseMax = 1.04f,
+        backdropInstability = 0.018f,
+        burstEnabled = false,
+        burstScale = 1.72f,
+        burstIntensity = 0.34f,
+        burstDurationMillis = 980,
     )
 
     VpnRuntimePhase.STAGED -> HeroVisual(
@@ -3138,6 +4421,7 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         orbitDurationMillis = 14_000,
         breathDurationMillis = 5_200,
         pulseDurationMillis = 3_800,
+        segmentOrbitDurationMillis = 22_000,
         outerScale = 1.02f,
         coreScale = 1.01f,
         glowAlpha = 0.28f,
@@ -3149,6 +4433,17 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         secondarySweep = 18f,
         ringStrokeScale = 0.9f,
         coreDiameterScale = 0.46f,
+        backdropMode = HeroBackdropMode.PARTICLE_FLOW,
+        backdropScale = 1.82f,
+        backdropAlpha = 0.42f,
+        backdropEnergy = 0.48f,
+        backdropPulseMin = 0.8f,
+        backdropPulseMax = 1.04f,
+        backdropInstability = 0.05f,
+        burstEnabled = true,
+        burstScale = 1.84f,
+        burstIntensity = 0.5f,
+        burstDurationMillis = 980,
     )
 
     VpnRuntimePhase.START_REQUESTED -> HeroVisual(
@@ -3157,6 +4452,7 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         orbitDurationMillis = 5_200,
         breathDurationMillis = 2_300,
         pulseDurationMillis = 1_700,
+        segmentOrbitDurationMillis = 8_800,
         outerScale = 1.036f,
         coreScale = 1.07f,
         glowAlpha = 0.48f,
@@ -3168,6 +4464,17 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         secondarySweep = 44f,
         ringStrokeScale = 1f,
         coreDiameterScale = 0.52f,
+        backdropMode = HeroBackdropMode.PLASMA_FIELD,
+        backdropScale = 2.08f,
+        backdropAlpha = 0.68f,
+        backdropEnergy = 0.92f,
+        backdropPulseMin = 0.76f,
+        backdropPulseMax = 1.06f,
+        backdropInstability = 0.2f,
+        burstEnabled = true,
+        burstScale = 2.12f,
+        burstIntensity = 1.02f,
+        burstDurationMillis = 1_180,
     )
 
     VpnRuntimePhase.RUNNING -> HeroVisual(
@@ -3176,6 +4483,7 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         orbitDurationMillis = 12_000,
         breathDurationMillis = 3_800,
         pulseDurationMillis = 2_800,
+        segmentOrbitDurationMillis = 17_000,
         outerScale = 1.034f,
         coreScale = 1.14f,
         glowAlpha = 0.66f,
@@ -3187,6 +4495,17 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         secondarySweep = 24f,
         ringStrokeScale = 0.96f,
         coreDiameterScale = 0.54f,
+        backdropMode = HeroBackdropMode.PLASMA_FIELD,
+        backdropScale = 1.94f,
+        backdropAlpha = 0.56f,
+        backdropEnergy = 0.72f,
+        backdropPulseMin = 0.8f,
+        backdropPulseMax = 1.02f,
+        backdropInstability = 0.072f,
+        burstEnabled = true,
+        burstScale = 1.94f,
+        burstIntensity = 0.88f,
+        burstDurationMillis = 1_080,
     )
 
     VpnRuntimePhase.FAIL_CLOSED -> HeroVisual(
@@ -3195,6 +4514,7 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         orbitDurationMillis = 7_200,
         breathDurationMillis = 2_000,
         pulseDurationMillis = 1_400,
+        segmentOrbitDurationMillis = 8_200,
         outerScale = 1.028f,
         coreScale = 1.1f,
         glowAlpha = 0.58f,
@@ -3206,15 +4526,18 @@ private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
         secondarySweep = 32f,
         ringStrokeScale = 1f,
         coreDiameterScale = 0.52f,
+        backdropMode = HeroBackdropMode.PLASMA_FIELD,
+        backdropScale = 2.02f,
+        backdropAlpha = 0.62f,
+        backdropEnergy = 0.84f,
+        backdropPulseMin = 0.78f,
+        backdropPulseMax = 1.04f,
+        backdropInstability = 0.16f,
+        burstEnabled = true,
+        burstScale = 1.98f,
+        burstIntensity = 0.9f,
+        burstDurationMillis = 960,
     )
-}
-
-private fun heroPlasmaBackdropScale(phase: VpnRuntimePhase): Float = when (phase) {
-    VpnRuntimePhase.IDLE -> 1.72f
-    VpnRuntimePhase.STAGED -> 1.9f
-    VpnRuntimePhase.START_REQUESTED -> 2f
-    VpnRuntimePhase.RUNNING -> 2f
-    VpnRuntimePhase.FAIL_CLOSED -> 2f
 }
 
 private fun periodicRange(
@@ -3236,38 +4559,14 @@ private fun heroHighlightedSegments(phase: VpnRuntimePhase): IntArray = when (ph
     VpnRuntimePhase.FAIL_CLOSED -> intArrayOf(0, 2, 4, 5)
 }
 
-private fun heroSegmentOrbitDurationMillis(phase: VpnRuntimePhase): Int = when (phase) {
-    VpnRuntimePhase.IDLE -> 34_000
-    VpnRuntimePhase.STAGED -> 24_000
-    VpnRuntimePhase.START_REQUESTED -> 9_600
-    VpnRuntimePhase.RUNNING -> 20_000
-    VpnRuntimePhase.FAIL_CLOSED -> 8_400
-}
-
-private fun heroEnergyBurstIntensity(phase: VpnRuntimePhase): Float = when (phase) {
-    VpnRuntimePhase.IDLE -> 0.34f
-    VpnRuntimePhase.STAGED -> 0.54f
-    VpnRuntimePhase.START_REQUESTED -> 0.92f
-    VpnRuntimePhase.RUNNING -> 1f
-    VpnRuntimePhase.FAIL_CLOSED -> 0.82f
-}
-
-private fun heroEnergyBurstDurationMillis(phase: VpnRuntimePhase): Int = when (phase) {
-    VpnRuntimePhase.IDLE -> 980
-    VpnRuntimePhase.STAGED -> 1_000
-    VpnRuntimePhase.START_REQUESTED -> 1_220
-    VpnRuntimePhase.RUNNING -> 1_120
-    VpnRuntimePhase.FAIL_CLOSED -> 940
-}
-
 private fun heroGlyph(phase: VpnRuntimePhase): AppGlyph = when (phase) {
     VpnRuntimePhase.START_REQUESTED -> AppGlyph.POWER
     VpnRuntimePhase.FAIL_CLOSED -> AppGlyph.ALERT
     else -> AppGlyph.SECURITY
 }
 
-private fun profileTypeLabel(): String =
-    "VLESS + REALITY"
+private fun profileTypeLabel(profile: io.acionyx.tunguska.domain.ProfileIr): String =
+    profile.outboundShapeLabel()
 
 private fun profileSealLabel(state: MainUiState): String =
     if (state.profileStorage.persistedProfileHash == state.profile.canonicalHash()) {
@@ -3408,7 +4707,7 @@ private fun runtimeHeadline(phase: VpnRuntimePhase): String = when (phase) {
 
 private fun runtimeSummary(state: MainUiState): String = when (state.runtimeSnapshot.phase) {
     VpnRuntimePhase.RUNNING ->
-        "Traffic is flowing through ${state.profile.outbound.address}:${state.profile.outbound.port} with ${splitTunnelLabel(state.tunnelPlan.splitTunnelMode).lowercase()} applied."
+        "Traffic is flowing through ${state.profile.outboundSummary.let { "${it.endpoint.address}:${it.endpoint.port}" }} with ${splitTunnelLabel(state.tunnelPlan.splitTunnelMode).lowercase()} applied."
 
     VpnRuntimePhase.START_REQUESTED ->
         "Starting the VPN runtime. The session will only stay up if bootstrap, local exposure, and health checks pass."
@@ -3444,7 +4743,11 @@ private fun homePrimaryStatusLine(state: MainUiState): String = when {
         "Profile staged and ready."
 
     state.runtimeSnapshot.phase == VpnRuntimePhase.FAIL_CLOSED ->
-        state.controlError ?: state.runtimeSnapshot.lastError ?: "Connection attention required."
+        runtimeFailureDisplayText(
+            rawError = state.controlError ?: state.runtimeSnapshot.lastError,
+            section = state.runtimeSnapshot.lastErrorSection,
+            fieldPath = state.runtimeSnapshot.lastErrorFieldPath,
+        ) ?: "Connection attention required."
 
     else -> "Ready when you are."
 }
@@ -3467,7 +4770,11 @@ private fun homeEgressStatusLine(state: MainUiState): String = when {
         "Connecting..."
 
     state.runtimeSnapshot.phase == VpnRuntimePhase.FAIL_CLOSED ->
-        state.controlError ?: state.runtimeSnapshot.lastError ?: "Connection attention required."
+        runtimeFailureDisplayText(
+            rawError = state.controlError ?: state.runtimeSnapshot.lastError,
+            section = state.runtimeSnapshot.lastErrorSection,
+            fieldPath = state.runtimeSnapshot.lastErrorFieldPath,
+        ) ?: "Connection attention required."
 
     state.egressObservation.phase == EgressObservationPhase.OBSERVED &&
         state.egressObservation.publicIp != null ->

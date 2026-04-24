@@ -15,6 +15,8 @@ The app is organized around four top-level sections:
 
 Technical controls remain available, but they are no longer the primary screen. Runtime strategy selection, restage, refresh runtime, storage details, build surface, and tunnel plan live under Security -> Advanced diagnostics.
 
+The finished Advanced diagnostics slice is organized around four cards in order: Runtime controls, Strategy capability summary, Runtime lane summary, and Runtime internals. Capability rows with limits expand their technical note inline from the yellow chip, and the runtime lane summary info action scrolls back to the capability matrix instead of opening a duplicate popup.
+
 ## Supported Platform
 
 - Android `8.0+` (`minSdk 26`)

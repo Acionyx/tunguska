@@ -81,6 +81,8 @@ Security contains trust posture and operational surfaces:
 
 Advanced diagnostics is the correct location for runtime strategy selection, refresh runtime, restage, runtime internals, storage, build surface, and tunnel plan.
 
+The completed diagnostics flow is the ordered card sequence Runtime controls -> Strategy capability summary -> Runtime lane summary -> Runtime internals. Capability rows with non-green support states reveal their technical note inline from the status chip, and the runtime lane summary info affordance must bring the capability summary card into view instead of opening a generic duplicate dialog.
+
 ## Supported Platform
 
 - Android `8.0+` (`minSdk 26`)
