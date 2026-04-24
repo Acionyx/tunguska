@@ -19,11 +19,15 @@ jobs:
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
+
     - name: Build with Gradle
+      env:
+        GITHUB_PACKAGES_USER: ${{ secrets.GH_USER }}
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.GH_TOKEN }}
       run: ./gradlew assembleDebug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: tunguska-debug
+        name: tunguska-fixed-android10
         path: "**/build/outputs/apk/debug/*.apk"
