@@ -807,7 +807,7 @@ internal class VpnTestHarness(
             ProfileImportParser.parse(payload).profile.name
         } else {
             val uri = URI(payload.trim())
-            URLDecoder.decode(uri.rawFragment.orEmpty(), Charsets.UTF_8)
+            URLDecoder.decode(uri.rawFragment.orEmpty(), "UTF-8")
                 .trim()
                 .takeIf { it.isNotBlank() }
         }

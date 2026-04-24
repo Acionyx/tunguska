@@ -801,7 +801,7 @@ class AnubisJointUiHarness {
     }.getOrDefault("")
 
     private fun urlDecode(value: String): String = runCatching {
-        URLDecoder.decode(value, Charsets.UTF_8)
+        URLDecoder.decode(value, "UTF-8")
     }.getOrDefault(value)
 
     private fun MutableList<String>.addIfNotBlank(value: String?) {
