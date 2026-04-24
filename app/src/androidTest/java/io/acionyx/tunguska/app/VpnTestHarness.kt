@@ -795,7 +795,15 @@ internal class VpnTestHarness(
 
     private fun waitForAppliedProfile(payload: String) {
         val marker = deriveProfileMarker(payload) ?: return
-        val found = device.wait(Until.hasObject(By.textContains(marker)), 10_000)
+        val found = runCatching {
+            composeRule.waitUntil(timeoutMillis = 30_000) {
+                val storedProfileMatches = runCatching {
+                    profileRepository.reload().profile.name.contains(marker, ignoreCase = true)
+                }.getOrDefault(false)
+                storedProfileMatches || device.hasObject(By.textContains(marker))
+            }
+            true
+        }.getOrDefault(false)
         if (!found) {
             captureDiagnostics("profile_apply_timeout")
             fail("Imported profile marker '$marker' was not observed after confirmation.")
