@@ -144,6 +144,16 @@ jobs:
           "${SDKMANAGER}" "platforms;android-${{ steps.android_pins.outputs.compile_sdk }}" "build-tools;${{ steps.android_pins.outputs.build_tools }}" "platform-tools"
       - name: Ensure Gradle Wrapper Is Executable
         run: chmod +x gradlew
+      - name: Download Debug APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tunguska-debug-apks
+          path: ci-assets
+      - name: Download Test And Helper APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tunguska-test-and-helper-apks
+          path: ci-assets
       - name: Run API 29 compatibility smoke
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -153,13 +163,22 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
+            mkdir -p ci-api29
             adb wait-for-device
-            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=io.acionyx.tunguska.app.LegacyAndroidImportCompatibilitySmokeTest --console=plain --no-configuration-cache
+            adb install -r ci-assets/tunguska-x86_64-emulator-debug.apk
+            adb install -r ci-assets/tunguska-app-debug-androidTest.apk
+            adb shell pm list instrumentation | tee ci-api29/instrumentation-list.txt
+            set +e
+            adb shell am instrument -w -e class io.acionyx.tunguska.app.LegacyAndroidImportCompatibilitySmokeTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner | tee ci-api29/instrumentation.txt
+            status=${PIPESTATUS[0]}
+            adb logcat -d > ci-api29/logcat.txt || true
+            exit $status
       - name: Upload API 29 smoke reports
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tunguska-api29-smoke-reports
           path: |
+            ci-api29/**
             app/build/reports/androidTests/connected/**
             app/build/outputs/androidTest-results/connected/**
