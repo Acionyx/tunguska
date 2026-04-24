@@ -2,14 +2,18 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+val androidCompileSdk = providers.gradleProperty("tunguska.android.compileSdk").get().toInt()
+val androidMinSdk = providers.gradleProperty("tunguska.android.minSdk").get().toInt()
+val androidTargetSdk = providers.gradleProperty("tunguska.android.targetSdk").get().toInt()
+
 android {
     namespace = "io.acionyx.tunguska.trafficprobe"
-    compileSdk = 36
+    compileSdk = androidCompileSdk
 
     defaultConfig {
         applicationId = "io.acionyx.tunguska.trafficprobe"
-        minSdk = 26
-        targetSdk = 36
+        minSdk = androidMinSdk
+        targetSdk = androidTargetSdk
         versionCode = 1
         versionName = "0.1.0"
     }

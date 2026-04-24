@@ -2,12 +2,15 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
+val androidCompileSdk = providers.gradleProperty("tunguska.android.compileSdk").get().toInt()
+val androidMinSdk = providers.gradleProperty("tunguska.android.minSdk").get().toInt()
+
 android {
     namespace = "io.acionyx.tunguska.vpnservice"
-    compileSdk = 36
+    compileSdk = androidCompileSdk
 
     defaultConfig {
-        minSdk = 26
+        minSdk = androidMinSdk
         consumerProguardFiles("consumer-rules.pro")
     }
 

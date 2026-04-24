@@ -20,6 +20,13 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Read Android pins
+        id: android_pins
+        shell: bash
+        run: |
+          echo "compile_sdk=$(grep '^tunguska.android.compileSdk=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "build_tools=$(grep '^tunguska.android.buildTools=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "compatibility_api=$(grep '^tunguska.android.compatibilityApi=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: temurin
@@ -29,11 +36,22 @@ jobs:
         run: |
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           yes | "${SDKMANAGER}" --licenses
-          "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          "${SDKMANAGER}" "platforms;android-${{ steps.android_pins.outputs.compile_sdk }}" "build-tools;${{ steps.android_pins.outputs.build_tools }}" "platform-tools"
       - name: Ensure Gradle Wrapper Is Executable
         run: chmod +x gradlew
       - name: Verify JVM and Android Build
-        run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
+        run: |
+          ./gradlew \
+            test \
+            :vpnservice:testDebugUnitTest \
+            :app:testDebugUnitTest \
+            :app:assembleDebug \
+            :app:assembleInternal \
+            :app:assembleDebugAndroidTest \
+            :jointtesthost:assembleDebug \
+            :jointtesthost:assembleDebugAndroidTest \
+            :trafficprobe:assembleDebug \
+            --no-configuration-cache
       - name: Prepare ABI-Specific APK Assets
         run: |
           mkdir -p ci-assets
@@ -49,6 +67,20 @@ jobs:
           sha256sum ci-assets/tunguska-x86_64-emulator-internal.apk > ci-assets/tunguska-x86_64-emulator-internal.apk.sha256
           sha256sum ci-assets/tunguska-arm64-v8a-debug.apk > ci-assets/tunguska-arm64-v8a-debug.apk.sha256
           sha256sum ci-assets/tunguska-x86_64-emulator-debug.apk > ci-assets/tunguska-x86_64-emulator-debug.apk.sha256
+      - name: Prepare Test And Helper APK Assets
+        run: |
+          APP_ANDROID_TEST="$(find app/build/outputs/apk/androidTest -name '*debug-androidTest.apk' | head -n 1)"
+          JOINTTESTHOST_DEBUG="$(find jointtesthost/build/outputs/apk/debug -name '*debug*.apk' | head -n 1)"
+          JOINTTESTHOST_ANDROID_TEST="$(find jointtesthost/build/outputs/apk/androidTest -name '*debug-androidTest.apk' | head -n 1)"
+          TRAFFICPROBE_DEBUG="$(find trafficprobe/build/outputs/apk/debug -name '*debug*.apk' | head -n 1)"
+          cp "$APP_ANDROID_TEST" ci-assets/tunguska-app-debug-androidTest.apk
+          cp "$JOINTTESTHOST_DEBUG" ci-assets/tunguska-jointtesthost-debug.apk
+          cp "$JOINTTESTHOST_ANDROID_TEST" ci-assets/tunguska-jointtesthost-debug-androidTest.apk
+          cp "$TRAFFICPROBE_DEBUG" ci-assets/tunguska-trafficprobe-debug.apk
+          sha256sum ci-assets/tunguska-app-debug-androidTest.apk > ci-assets/tunguska-app-debug-androidTest.apk.sha256
+          sha256sum ci-assets/tunguska-jointtesthost-debug.apk > ci-assets/tunguska-jointtesthost-debug.apk.sha256
+          sha256sum ci-assets/tunguska-jointtesthost-debug-androidTest.apk > ci-assets/tunguska-jointtesthost-debug-androidTest.apk.sha256
+          sha256sum ci-assets/tunguska-trafficprobe-debug.apk > ci-assets/tunguska-trafficprobe-debug.apk.sha256
       - name: Upload Debug APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -67,3 +99,86 @@ jobs:
             ci-assets/tunguska-arm64-v8a-internal.apk.sha256
             ci-assets/tunguska-x86_64-emulator-internal.apk
             ci-assets/tunguska-x86_64-emulator-internal.apk.sha256
+
+      - name: Upload Test And Helper APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tunguska-test-and-helper-apks
+          path: |
+            ci-assets/tunguska-app-debug-androidTest.apk
+            ci-assets/tunguska-app-debug-androidTest.apk.sha256
+            ci-assets/tunguska-jointtesthost-debug.apk
+            ci-assets/tunguska-jointtesthost-debug.apk.sha256
+            ci-assets/tunguska-jointtesthost-debug-androidTest.apk
+            ci-assets/tunguska-jointtesthost-debug-androidTest.apk.sha256
+            ci-assets/tunguska-trafficprobe-debug.apk
+            ci-assets/tunguska-trafficprobe-debug.apk.sha256
+
+  compatibility-api29-smoke:
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      GITHUB_PACKAGES_USER: ${{ github.actor }}
+      GITHUB_PACKAGES_TOKEN: ${{ github.token }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Read Android pins
+        id: android_pins
+        shell: bash
+        run: |
+          echo "compile_sdk=$(grep '^tunguska.android.compileSdk=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "build_tools=$(grep '^tunguska.android.buildTools=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "compatibility_api=$(grep '^tunguska.android.compatibilityApi=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Install Android SDK Packages
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses
+          "${SDKMANAGER}" "platforms;android-${{ steps.android_pins.outputs.compile_sdk }}" "build-tools;${{ steps.android_pins.outputs.build_tools }}" "platform-tools"
+      - name: Ensure Gradle Wrapper Is Executable
+        run: chmod +x gradlew
+      - name: Download Debug APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tunguska-debug-apks
+          path: ci-assets
+      - name: Download Test And Helper APKs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tunguska-test-and-helper-apks
+          path: ci-assets
+      - name: Run API 29 compatibility smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ steps.android_pins.outputs.compatibility_api }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            mkdir -p ci-api29
+            adb wait-for-device
+            adb install -r ci-assets/tunguska-x86_64-emulator-debug.apk
+            adb install -r ci-assets/tunguska-app-debug-androidTest.apk
+            adb shell pm list instrumentation | tee ci-api29/instrumentation-list.txt
+            set +e
+            adb shell am instrument -w -e class io.acionyx.tunguska.app.LegacyAndroidImportCompatibilitySmokeTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner | tee ci-api29/instrumentation.txt
+            status=${PIPESTATUS[0]}
+            adb logcat -d > ci-api29/logcat.txt || true
+            exit $status
+      - name: Upload API 29 smoke reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tunguska-api29-smoke-reports
+          path: |
+            ci-api29/**
+            app/build/reports/androidTests/connected/**
+            app/build/outputs/androidTest-results/connected/**

@@ -4,14 +4,18 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val androidCompileSdk = providers.gradleProperty("tunguska.android.compileSdk").get().toInt()
+val androidMinSdk = providers.gradleProperty("tunguska.android.minSdk").get().toInt()
+val androidTargetSdk = providers.gradleProperty("tunguska.android.targetSdk").get().toInt()
+
 android {
     namespace = "io.acionyx.tunguska"
-    compileSdk = 36
+    compileSdk = androidCompileSdk
 
     defaultConfig {
         applicationId = "io.acionyx.tunguska"
-        minSdk = 26
-        targetSdk = 36
+        minSdk = androidMinSdk
+        targetSdk = androidTargetSdk
         versionCode = 13
         versionName = "0.4.3"
 
