@@ -168,9 +168,9 @@ jobs:
             adb install -r ci-assets/tunguska-x86_64-emulator-debug.apk
             adb install -r ci-assets/tunguska-app-debug-androidTest.apk
             adb shell pm list instrumentation | tee ci-api29/instrumentation-list.txt
-            set +e
-            adb shell am instrument -w -e class io.acionyx.tunguska.app.LegacyAndroidImportCompatibilitySmokeTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner | tee ci-api29/instrumentation.txt
-            status=${PIPESTATUS[0]}
+            adb shell am instrument -w -e class io.acionyx.tunguska.app.LegacyAndroidImportCompatibilitySmokeTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner > ci-api29/instrumentation.txt 2>&1
+            status=$?
+            cat ci-api29/instrumentation.txt
             adb logcat -d > ci-api29/logcat.txt || true
             exit $status
       - name: Upload API 29 smoke reports
