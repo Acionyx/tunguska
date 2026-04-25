@@ -9,4 +9,7 @@ object AutomationRelayContract {
     const val EXTRA_CALLER_HINT: String = "caller_hint"
     const val EXTRA_RESULT_STATUS: String = "automation_status"
     const val EXTRA_RESULT_ERROR: String = "automation_error"
+    const val EXTRA_RESULT_ERROR_SECTION: String = "automation_error_section"
+    const val EXTRA_RESULT_ERROR_FIELD_PATH: String = "automation_error_field_path"
+    const val EXTRA_RESULT_RUNTIME_METADATA_JSON: String = "automation_runtime_metadata_json"
 }

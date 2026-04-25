@@ -64,9 +64,10 @@ class AutomationIntegrationRepositoryTest {
     fun `validate token rejects partial prefix matches`() {
         val repository = buildRepository()
         val enabled = repository.enable()
+        val token = requireNotNull(enabled.token)
 
-        assertFalse(repository.validateToken(enabled.token!!.dropLast(1)))
-        assertFalse(repository.validateToken(enabled.token!!.take(4)))
+        assertFalse(repository.validateToken(token.dropLast(1)))
+        assertFalse(repository.validateToken(token.take(4)))
     }
 
     @Test
@@ -77,11 +78,29 @@ class AutomationIntegrationRepositoryTest {
         val recorded = repository.recordResult(
             status = AutomationCommandStatus.RUNTIME_START_FAILED,
             error = "Timed out",
+            errorSection = "Routing",
+            errorFieldPath = "routing.rules",
+            runtimeMetadata = AutomationRuntimeMetadata(
+                laneLabel = "Xray + tun2socks",
+                laneStatus = "Fallback with limits",
+                connectDecisionSummary = "Start failed on Xray + tun2socks. Recommended: Sing-box embedded.",
+                compilerPath = "Canonical profile rebuild",
+                nextStartLaneLabel = "Sing-box embedded",
+            ),
             callerHint = "anubis",
         )
 
         assertEquals(AutomationCommandStatus.RUNTIME_START_FAILED, recorded.lastAutomationStatus)
         assertEquals("Timed out", recorded.lastAutomationError)
+        assertEquals("Routing", recorded.lastAutomationErrorSection)
+        assertEquals("routing.rules", recorded.lastAutomationErrorFieldPath)
+        assertEquals("Xray + tun2socks", recorded.lastAutomationRuntimeMetadata?.laneLabel)
+        assertEquals(
+            "Start failed on Xray + tun2socks. Recommended: Sing-box embedded.",
+            recorded.lastAutomationRuntimeMetadata?.connectDecisionSummary,
+        )
+        assertEquals("Canonical profile rebuild", recorded.lastAutomationRuntimeMetadata?.compilerPath)
+        assertEquals("Sing-box embedded", recorded.lastAutomationRuntimeMetadata?.nextStartLaneLabel)
         assertEquals("anubis", recorded.lastCallerHint)
         assertNotNull(recorded.lastAutomationAtEpochMs)
     }

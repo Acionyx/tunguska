@@ -2,14 +2,47 @@ package io.acionyx.tunguska.vpnservice
 
 import android.content.Context
 import android.net.VpnService
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.OutboundSecurityId
+import io.acionyx.tunguska.domain.OutboundTransportId
+import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.outboundShapeLabel
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import java.io.File
+
+data class RuntimeLaneCompatibilityMetadata(
+    val statusLabel: String,
+    val selectedSummaryTitle: String,
+    val recommendedStrategyId: EmbeddedRuntimeStrategyId? = null,
+    val recommendation: String? = null,
+)
 
 data class StagedRuntimeRequest(
     val plan: TunnelSessionPlan,
     val compiledConfig: CompiledEngineConfig,
     val profileCanonicalJson: String? = null,
     val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    val profileProtocolId: OutboundProtocolId? = null,
+    val profileTransportId: OutboundTransportId? = null,
+    val profileSecurityId: OutboundSecurityId? = null,
+    val laneCompatibility: RuntimeLaneCompatibilityMetadata? = null,
+)
+
+fun ProfileIr.toStagedRuntimeRequest(
+    plan: TunnelSessionPlan,
+    compiledConfig: CompiledEngineConfig,
+    runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    profileCanonicalJson: String = canonicalJson(),
+    laneCompatibility: RuntimeLaneCompatibilityMetadata? = null,
+): StagedRuntimeRequest = StagedRuntimeRequest(
+    plan = plan,
+    compiledConfig = compiledConfig,
+    profileCanonicalJson = profileCanonicalJson,
+    runtimeStrategy = runtimeStrategy,
+    profileProtocolId = outboundProtocolId,
+    profileTransportId = outboundTransportId,
+    profileSecurityId = outboundSecurityId,
+    laneCompatibility = laneCompatibility,
 )
 
 data class EmbeddedRuntimeDependencies(
@@ -20,6 +53,16 @@ data class EmbeddedRuntimeDependencies(
 enum class EmbeddedRuntimeStrategyId {
     XRAY_TUN2SOCKS,
     SINGBOX_EMBEDDED,
+}
+
+enum class RuntimeConfigSource {
+    STAGED_ENGINE_PAYLOAD,
+    CANONICAL_PROFILE_REBUILD,
+}
+
+fun runtimeConfigSourceFor(strategyId: EmbeddedRuntimeStrategyId): RuntimeConfigSource = when (strategyId) {
+    EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> RuntimeConfigSource.CANONICAL_PROFILE_REBUILD
+    EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> RuntimeConfigSource.STAGED_ENGINE_PAYLOAD
 }
 
 data class EmbeddedRuntimeStrategyPolicy(
@@ -57,6 +100,8 @@ data class EmbeddedEngineHostResult(
     val summary: String,
     val preparedAtEpochMs: Long,
     val workspacePath: String? = null,
+    val errorSection: String? = null,
+    val errorFieldPath: String? = null,
 )
 
 data class EngineSessionWorkspace(
@@ -83,6 +128,8 @@ data class EmbeddedEngineSessionResult(
     val status: EmbeddedEngineSessionStatus,
     val summary: String,
     val observedAtEpochMs: Long,
+    val errorSection: String? = null,
+    val errorFieldPath: String? = null,
 )
 
 data class EmbeddedEngineSessionHealthResult(
@@ -235,6 +282,20 @@ class EngineSessionWorkspaceFactory(
         }
         request.profileCanonicalJson?.let { profileJson ->
             appendLine("""  "profile_payload_bytes": ${profileJson.byteSize()},""")
+        }
+        if (request.profileProtocolId != null && request.profileTransportId != null) {
+            appendLine(
+                """  "profile_shape": "${outboundShapeLabel(request.profileProtocolId, request.profileTransportId, request.profileSecurityId).jsonEscape()}",""",
+            )
+        }
+        request.profileProtocolId?.let { profileProtocolId ->
+            appendLine("""  "profile_protocol_id": "${profileProtocolId.name.jsonEscape()}",""")
+        }
+        request.profileTransportId?.let { profileTransportId ->
+            appendLine("""  "profile_transport_id": "${profileTransportId.name.jsonEscape()}",""")
+        }
+        request.profileSecurityId?.let { profileSecurityId ->
+            appendLine("""  "profile_security_id": "${profileSecurityId.name.jsonEscape()}",""")
         }
         appendLine("""  "session_label": "${sessionLabel.jsonEscape()}",""")
         appendLine("""  "process_suffix": "${request.plan.processNameSuffix.jsonEscape()}",""")

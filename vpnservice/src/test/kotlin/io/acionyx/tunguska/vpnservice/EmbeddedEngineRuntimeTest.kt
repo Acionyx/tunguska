@@ -1,5 +1,8 @@
 package io.acionyx.tunguska.vpnservice
 
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.OutboundSecurityId
+import io.acionyx.tunguska.domain.OutboundTransportId
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
@@ -35,6 +38,10 @@ class EmbeddedEngineRuntimeTest {
         assertTrue(manifest.contains("\"engine_id\": \"singbox\""))
         assertTrue(manifest.contains("\"config_hash\": \"abc123\""))
         assertTrue(manifest.contains("\"payload_bytes\": ${request.compiledConfig.payload.toByteArray().size}"))
+        assertTrue(manifest.contains("\"profile_shape\": \"VLESS + REALITY over TCP\""))
+        assertTrue(manifest.contains("\"profile_protocol_id\": \"VLESS_REALITY\""))
+        assertTrue(manifest.contains("\"profile_transport_id\": \"TCP\""))
+        assertTrue(manifest.contains("\"profile_security_id\": \"REALITY\""))
         assertTrue(!manifest.contains("secret-value"))
         assertEquals(request.compiledConfig.payload, configPayload)
     }
@@ -239,6 +246,9 @@ class EmbeddedEngineRuntimeTest {
         return StagedRuntimeRequest(
             plan = TunnelSessionPlanner.plan(compiled),
             compiledConfig = compiled,
+            profileProtocolId = OutboundProtocolId.VLESS_REALITY,
+            profileTransportId = OutboundTransportId.TCP,
+            profileSecurityId = OutboundSecurityId.REALITY,
         )
     }
 

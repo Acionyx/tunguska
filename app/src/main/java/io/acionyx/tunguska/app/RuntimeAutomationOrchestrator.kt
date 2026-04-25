@@ -17,6 +17,8 @@ import io.acionyx.tunguska.engine.singbox.SingboxEnginePlugin
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionHealthStatus
 import io.acionyx.tunguska.vpnservice.EmbeddedEngineSessionStatus
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
+import io.acionyx.tunguska.vpnservice.RuntimeLaneCompatibilityMetadata
+import io.acionyx.tunguska.vpnservice.RuntimeConfigSource
 import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
@@ -24,6 +26,7 @@ import io.acionyx.tunguska.vpnservice.VpnRuntimeContract
 import io.acionyx.tunguska.vpnservice.VpnRuntimeControlService
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import io.acionyx.tunguska.vpnservice.toStagedRuntimeRequest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -47,12 +50,14 @@ class RuntimeAutomationOrchestrator(
     ): PreparedRuntimeRequest {
         logInfo("Compiling stored profile '${profile.name}' for automation.")
         val compiledConfig = plugin.compile(profile)
+        val guidance = StrategyCapabilityRegistry.evaluateProfileGuidance(profile, runtimeStrategy)
         return PreparedRuntimeRequest(
             profile = profile,
             compiledConfig = compiledConfig,
             tunnelPlan = TunnelSessionPlanner.plan(compiledConfig),
             profileCanonicalJson = profile.canonicalJson(),
             runtimeStrategy = runtimeStrategy,
+            laneCompatibility = stagedRuntimeLaneCompatibilityMetadata(runtimeStrategy, guidance),
         )
     }
 
@@ -97,7 +102,12 @@ class RuntimeAutomationOrchestrator(
             status = AutomationCommandStatus.SUCCESS,
             summary = "Loaded the current isolated runtime status.",
             snapshot = response.snapshot,
-            error = response.error,
+            error = automationErrorMessage(
+                rawError = response.error,
+                snapshot = response.snapshot,
+            ),
+            errorSection = response.snapshot.lastErrorSection,
+            errorFieldPath = response.snapshot.lastErrorFieldPath,
         )
     }
 
@@ -127,7 +137,17 @@ class RuntimeAutomationOrchestrator(
                         "The isolated Tunguska runtime did not expose a ready session."
                     },
                     snapshot = readyCurrent.snapshot,
-                    error = readyCurrent.error ?: readyCurrent.snapshot.lastError,
+                    error = automationErrorMessage(
+                        rawError = readyCurrent.error,
+                        snapshot = readyCurrent.snapshot,
+                    ),
+                    errorSection = readyCurrent.snapshot.lastErrorSection,
+                    errorFieldPath = readyCurrent.snapshot.lastErrorFieldPath,
+                    runtimeMetadata = automationRuntimeMetadata(
+                        snapshot = readyCurrent.snapshot,
+                        preparedRequest = request,
+                        status = readyStatus,
+                    ),
                     preparedRequest = request,
                 )
             }
@@ -139,6 +159,11 @@ class RuntimeAutomationOrchestrator(
                     summary = "The isolated Tunguska runtime rejected the staged request.",
                     snapshot = staged.snapshot,
                     error = staged.error,
+                    runtimeMetadata = automationRuntimeMetadata(
+                        snapshot = staged.snapshot,
+                        preparedRequest = request,
+                        status = AutomationCommandStatus.CONTROL_CHANNEL_ERROR,
+                    ),
                     preparedRequest = request,
                 )
             }
@@ -159,7 +184,17 @@ class RuntimeAutomationOrchestrator(
                     else -> "The isolated Tunguska runtime did not reach RUNNING."
                 },
                 snapshot = started.snapshot,
-                error = started.error ?: started.snapshot.lastError,
+                error = automationErrorMessage(
+                    rawError = started.error,
+                    snapshot = started.snapshot,
+                ),
+                errorSection = started.snapshot.lastErrorSection,
+                errorFieldPath = started.snapshot.lastErrorFieldPath,
+                runtimeMetadata = automationRuntimeMetadata(
+                    snapshot = started.snapshot,
+                    preparedRequest = request,
+                    status = status,
+                ),
                 preparedRequest = request,
             )
         }
@@ -197,7 +232,12 @@ class RuntimeAutomationOrchestrator(
                 else -> "The isolated Tunguska runtime did not return to IDLE."
             },
             snapshot = stopped.snapshot,
-            error = stopped.error ?: stopped.snapshot.lastError,
+            error = automationErrorMessage(
+                rawError = stopped.error,
+                snapshot = stopped.snapshot,
+            ),
+            errorSection = stopped.snapshot.lastErrorSection,
+            errorFieldPath = stopped.snapshot.lastErrorFieldPath,
         )
     }
 
@@ -271,6 +311,17 @@ class RuntimeAutomationOrchestrator(
         }
     }
 
+    private fun automationErrorMessage(
+        rawError: String?,
+        snapshot: VpnRuntimeSnapshot,
+    ): String? {
+        return runtimeFailureDisplayText(
+            rawError = rawError ?: snapshot.lastError,
+            section = snapshot.lastErrorSection,
+            fieldPath = snapshot.lastErrorFieldPath,
+        ) ?: rawError ?: snapshot.lastError
+    }
+
     private companion object {
         const val TAG: String = "RuntimeAutomation"
     }
@@ -290,12 +341,14 @@ data class PreparedRuntimeRequest(
     val tunnelPlan: TunnelSessionPlan,
     val profileCanonicalJson: String,
     val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+    val laneCompatibility: RuntimeLaneCompatibilityMetadata,
 ) {
-    fun toStagedRuntimeRequest(): StagedRuntimeRequest = StagedRuntimeRequest(
+    fun toStagedRuntimeRequest(): StagedRuntimeRequest = profile.toStagedRuntimeRequest(
         plan = tunnelPlan,
         compiledConfig = compiledConfig,
-        profileCanonicalJson = profileCanonicalJson,
         runtimeStrategy = runtimeStrategy,
+        profileCanonicalJson = profileCanonicalJson,
+        laneCompatibility = laneCompatibility,
     )
 }
 
@@ -303,9 +356,125 @@ data class RuntimeAutomationResult(
     val status: AutomationCommandStatus,
     val summary: String,
     val error: String? = null,
+    val errorSection: String? = null,
+    val errorFieldPath: String? = null,
     val snapshot: VpnRuntimeSnapshot? = null,
+    val runtimeMetadata: AutomationRuntimeMetadata? = snapshot?.toAutomationRuntimeMetadata(),
     val preparedRequest: PreparedRuntimeRequest? = null,
 )
+
+@kotlinx.serialization.Serializable
+data class AutomationRuntimeMetadata(
+    val laneLabel: String? = null,
+    val laneStatus: String? = null,
+    val laneSummaryTitle: String? = null,
+    val laneRecommendation: String? = null,
+    val connectDecisionSummary: String? = null,
+    val compilerPath: String? = null,
+    val compilerPathSummary: String? = null,
+    val nextStartLaneLabel: String? = null,
+    val nextStartLaneStatus: String? = null,
+    val nextStartLaneSummaryTitle: String? = null,
+    val nextStartLaneRecommendation: String? = null,
+    val nextStartCompilerPath: String? = null,
+    val nextStartCompilerPathSummary: String? = null,
+    val restageHint: String? = null,
+)
+
+internal fun VpnRuntimeSnapshot.toAutomationRuntimeMetadata(): AutomationRuntimeMetadata? {
+    val primaryStrategy = activeStrategy ?: configuredStrategy
+    val primaryLaneMetadata = if (activeStrategy != null) {
+        laneCompatibility
+    } else {
+        configuredLaneCompatibility ?: laneCompatibility
+    }
+    val primaryCompilerPath = runtimeConfigSource ?: configuredRuntimeConfigSource
+    val nextStartStrategy = configuredStrategy?.takeIf { activeStrategy != null && it != activeStrategy }
+    val nextStartLaneMetadata = configuredLaneCompatibility?.takeIf { nextStartStrategy != null }
+    val nextStartCompilerPath = configuredRuntimeConfigSource?.takeIf { nextStartStrategy != null }
+    val metadata = AutomationRuntimeMetadata(
+        laneLabel = primaryStrategy?.let(::automationLaneLabel),
+        laneStatus = primaryLaneMetadata?.statusLabel,
+        laneSummaryTitle = primaryLaneMetadata?.selectedSummaryTitle,
+        laneRecommendation = primaryLaneMetadata?.recommendation,
+        compilerPath = primaryCompilerPath?.let(::runtimeConfigSourceLabel),
+        compilerPathSummary = primaryCompilerPath?.let(::runtimeConfigSourceSummary),
+        nextStartLaneLabel = nextStartStrategy?.let(::automationLaneLabel),
+        nextStartLaneStatus = nextStartLaneMetadata?.statusLabel,
+        nextStartLaneSummaryTitle = nextStartLaneMetadata?.selectedSummaryTitle,
+        nextStartLaneRecommendation = nextStartLaneMetadata?.recommendation,
+        nextStartCompilerPath = nextStartCompilerPath?.let(::runtimeConfigSourceLabel),
+        nextStartCompilerPathSummary = nextStartCompilerPath?.let(::runtimeConfigSourceSummary),
+        restageHint = nextStartStrategy?.let {
+            "Configured lane differs from the active runtime. Restage or reconnect to switch the running session to ${automationLaneLabel(it)}."
+        },
+    )
+    return metadata.takeIf {
+        it.laneLabel != null ||
+            it.laneStatus != null ||
+            it.laneSummaryTitle != null ||
+            it.laneRecommendation != null ||
+            it.connectDecisionSummary != null ||
+            it.compilerPath != null ||
+            it.nextStartLaneLabel != null ||
+            it.nextStartLaneStatus != null ||
+            it.nextStartLaneSummaryTitle != null ||
+            it.nextStartLaneRecommendation != null ||
+            it.nextStartCompilerPath != null ||
+            it.restageHint != null
+    }
+}
+
+private fun automationRuntimeMetadata(
+    snapshot: VpnRuntimeSnapshot?,
+    preparedRequest: PreparedRuntimeRequest? = null,
+    status: AutomationCommandStatus,
+): AutomationRuntimeMetadata? {
+    val snapshotMetadata = snapshot?.toAutomationRuntimeMetadata()
+    val connectDecisionSummary = preparedRequest?.automationConnectDecisionSummary(status)
+    return when {
+        snapshotMetadata != null -> snapshotMetadata.copy(connectDecisionSummary = connectDecisionSummary)
+        connectDecisionSummary != null -> AutomationRuntimeMetadata(connectDecisionSummary = connectDecisionSummary)
+        else -> null
+    }
+}
+
+private fun PreparedRuntimeRequest.automationConnectDecisionSummary(
+    status: AutomationCommandStatus,
+): String? {
+    val phase = when (status) {
+        AutomationCommandStatus.SUCCESS -> ConnectDecisionPhase.STARTED
+        AutomationCommandStatus.RUNTIME_START_FAILED -> ConnectDecisionPhase.FAILED
+        else -> return null
+    }
+    return connectDecisionState(
+        selection = toAutomationSelectionState(),
+        phase = phase,
+    )?.message
+}
+
+private fun PreparedRuntimeRequest.toAutomationSelectionState(): ConfiguredSelectionState {
+    val recommendedStrategyId = laneCompatibility.recommendedStrategyId.takeIf { it != runtimeStrategy }
+    return ConfiguredSelectionState(
+        selectedStrategyId = runtimeStrategy,
+        selectedLaneLabel = automationLaneLabel(runtimeStrategy),
+        selectedSeverity = if (laneCompatibility.statusLabel == "Clean match" && recommendedStrategyId == null) {
+            StrategyCompatibilitySeverity.READY
+        } else {
+            StrategyCompatibilitySeverity.ATTENTION
+        },
+        statusLabel = laneCompatibility.statusLabel,
+        recommendedStrategyId = recommendedStrategyId,
+        recommendedLaneLabel = recommendedStrategyId?.let { "Recommended: ${automationLaneLabel(it)}" },
+        selectedSummaryTitle = laneCompatibility.selectedSummaryTitle,
+        recommendation = laneCompatibility.recommendation,
+    )
+}
+
+private fun automationLaneLabel(strategyId: EmbeddedRuntimeStrategyId): String = when (strategyId) {
+    EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> "Xray + tun2socks"
+    EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "Sing-box embedded"
+}
 
 interface RuntimeControlGateway : AutoCloseable {
     fun requestStatus(): RuntimeGatewayResponse

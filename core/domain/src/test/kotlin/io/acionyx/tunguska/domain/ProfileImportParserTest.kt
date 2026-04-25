@@ -23,6 +23,7 @@ class ProfileImportParserTest {
         assertEquals("xtls-rprx-vision", imported.profile.outbound.flow)
         assertEquals("vless", imported.source.rawScheme)
         assertEquals("vless", imported.source.normalizedScheme)
+        assertEquals("Validated a VLESS + REALITY over TCP share link.", imported.source.summary)
         assertTrue(imported.warnings.isEmpty())
         assertEquals(listOf(RegionalBypassPresetId.RUSSIA), imported.profile.routing.regionalBypass.enabledPresets)
     }
@@ -38,6 +39,7 @@ class ProfileImportParserTest {
         assertEquals("ess", imported.source.rawScheme)
         assertEquals("vless", imported.source.normalizedScheme)
         assertEquals(ImportedProfileFormat.VLESS_REALITY_URI, imported.source.format)
+        assertEquals("Validated an ess:// alias as a VLESS + REALITY over TCP share link.", imported.source.summary)
     }
 
     @Test
@@ -62,6 +64,7 @@ class ProfileImportParserTest {
         }
 
         assertTrue(error.issues.any { it.field == "import.type" })
+        assertTrue(error.issues.any { it.message.contains("VLESS + REALITY over TCP") })
     }
 
     @Test

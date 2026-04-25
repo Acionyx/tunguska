@@ -62,6 +62,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         context = application,
         onConnectionChanged = { connected ->
             uiState = uiState.copy(controlChannelConnected = connected)
+            if (connected) {
+                synchronizeConfiguredRuntimeStrategy()
+            }
         },
         onStatus = { snapshot, error ->
             Log.i(
@@ -71,9 +74,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "health=${snapshot.engineSessionHealthStatus} " +
                     "error='${error ?: snapshot.lastError ?: "none"}'",
             )
+            val clearSessionDecision =
+                uiState.connectDecisionPhase == ConnectDecisionPhase.STARTED &&
+                    snapshot.phase != VpnRuntimePhase.RUNNING
             uiState = uiState.copy(
                 runtimeSnapshot = snapshot,
                 controlError = error ?: snapshot.lastError,
+                connectDecisionPhase = if (clearSessionDecision) null else uiState.connectDecisionPhase,
+                connectDecisionMessage = if (clearSessionDecision) null else uiState.connectDecisionMessage,
             )
             synchronizeEgressObservation(snapshot)
         },
@@ -203,6 +211,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    private fun synchronizeConfiguredRuntimeStrategy() {
+        runtimeClient.syncConfiguredRuntimeStrategy(
+            profile = uiState.profile,
+            strategy = uiState.automationState.runtimeStrategy,
+        )
+    }
+
     fun copyAutomationToken() {
         val token = uiState.automationState.rawToken
         if (token.isNullOrBlank()) {
@@ -275,6 +290,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> "Selected runtime lane: sing-box embedded."
                     },
                 )
+                uiState = uiState.copy(
+                    connectDecisionPhase = null,
+                    connectDecisionMessage = null,
+                )
+                refreshStagedImportPreview(settings.runtimeStrategy)
             }
             .onFailure { error ->
                 uiState = uiState.copy(
@@ -284,6 +304,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ),
                 )
             }
+    }
+
+    fun saveProfileEditorDraft(draft: ProfileEditorDraft) {
+        val validationIssues = draft.validationIssues(uiState.profile)
+        if (validationIssues.isNotEmpty()) {
+            uiState = uiState.copy(
+                profileEditorStatus = null,
+                profileEditorError = validationIssues.first().message,
+            )
+            return
+        }
+
+        mutateProfile(
+            status = "Saved the active profile from the advanced editor.",
+            transform = { profile -> draft.toUpdatedProfile(profile) },
+            onSuccess = { status ->
+                uiState = uiState.copy(
+                    profileEditorStatus = status,
+                    profileEditorError = null,
+                )
+            },
+            onFailure = { error ->
+                uiState = uiState.copy(
+                    profileEditorStatus = null,
+                    profileEditorError = error.message ?: error.javaClass.simpleName,
+                )
+            },
+        )
     }
 
     fun setRussiaDirectEnabled(enabled: Boolean) {
@@ -1164,7 +1212,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runtimeClient.stageRuntime(
                 plan = uiState.tunnelPlan,
                 compiledConfig = uiState.compiledConfig,
-                profileCanonicalJson = uiState.profile.canonicalJson(),
+                profile = uiState.profile,
                 runtimeStrategy = uiState.automationState.runtimeStrategy,
             )
         }.onFailure { error ->
@@ -1174,10 +1222,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectRuntime() {
         if (!uiState.vpnPermissionGranted) {
-            uiState = uiState.copy(controlError = "Grant VpnService permission before connecting.")
+            uiState = uiState.copy(
+                controlError = "Grant VpnService permission before connecting.",
+                connectDecisionPhase = null,
+                connectDecisionMessage = null,
+            )
             return
         }
-        uiState = uiState.copy(controlError = null)
+        val connectSelection = uiState.configuredSelection
+        val connectProfileId = uiState.profile.id
+        val startingDecision = connectDecisionState(
+            selection = connectSelection,
+            phase = ConnectDecisionPhase.STARTING,
+        )
+        uiState = uiState.copy(
+            controlError = null,
+            connectDecisionPhase = startingDecision?.phase,
+            connectDecisionMessage = startingDecision?.message,
+        )
         backgroundExecutor.execute {
             val result = runCatching {
                 runtimeAutomationOrchestrator.prepareProfile(
@@ -1197,7 +1259,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
             )
             mainHandler.post {
-                uiState = uiState.copy(controlError = result.error)
+                val startedDecision = connectDecisionState(
+                    selection = connectSelection,
+                    phase = ConnectDecisionPhase.STARTED,
+                ).takeIf {
+                    result.status == AutomationCommandStatus.SUCCESS &&
+                        uiState.profile.id == connectProfileId &&
+                        uiState.automationState.runtimeStrategy == connectSelection.selectedStrategyId
+                }
+                val failedDecision = connectDecisionState(
+                    selection = connectSelection,
+                    phase = ConnectDecisionPhase.FAILED,
+                ).takeIf {
+                    result.status != AutomationCommandStatus.SUCCESS &&
+                        uiState.profile.id == connectProfileId &&
+                        uiState.automationState.runtimeStrategy == connectSelection.selectedStrategyId
+                }
+                uiState = uiState.copy(
+                    controlError = result.error,
+                    connectDecisionPhase = startedDecision?.phase ?: failedDecision?.phase,
+                    connectDecisionMessage = startedDecision?.message ?: failedDecision?.message,
+                )
                 refreshRuntimeStatus()
             }
         }
@@ -1215,7 +1297,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         backgroundExecutor.execute {
             val result = runtimeAutomationOrchestrator.stopRuntime()
             mainHandler.post {
-                uiState = uiState.copy(controlError = result.error)
+                uiState = uiState.copy(
+                    controlError = result.error,
+                    connectDecisionPhase = null,
+                    connectDecisionMessage = null,
+                )
                 refreshRuntimeStatus()
             }
         }
@@ -1801,14 +1887,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onSuccess { imported ->
                 pendingImportedProfile = imported
                 uiState = uiState.copy(
-                    importPreview = ImportPreviewState(
+                    importPreview = imported.toImportPreviewState(
                         source = source,
-                        normalizedSourceSummary = imported.source.summary,
-                        sourceScheme = imported.source.rawScheme.ifBlank { imported.source.normalizedScheme },
-                        profileName = imported.profile.name,
-                        endpointSummary = "${imported.profile.outbound.address}:${imported.profile.outbound.port}",
-                        profileHash = imported.profile.canonicalHash(),
-                        warnings = imported.warnings,
+                        selectedStrategyId = uiState.automationState.runtimeStrategy,
                     ),
                     importStatus = "Validated a staged ${source.summary()} import. Confirm to seal it into encrypted storage.",
                     importError = null,
@@ -1828,6 +1909,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pendingImportedProfile = null
     }
 
+    private fun refreshStagedImportPreview(runtimeStrategy: EmbeddedRuntimeStrategyId) {
+        val imported = pendingImportedProfile ?: return
+        val preview = uiState.importPreview ?: return
+        uiState = uiState.copy(
+            importPreview = imported.toImportPreviewState(
+                source = preview.source,
+                selectedStrategyId = runtimeStrategy,
+            ),
+        )
+    }
+
     private fun applyAutomationSettings(
         settings: AutomationIntegrationSettings,
         status: String?,
@@ -1840,6 +1932,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runtimeStrategy = settings.runtimeStrategy,
                 lastAutomationStatus = settings.lastAutomationStatus.name,
                 lastAutomationError = settings.lastAutomationError,
+                lastAutomationErrorSection = settings.lastAutomationErrorSection,
+                lastAutomationErrorFieldPath = settings.lastAutomationErrorFieldPath,
+                lastAutomationRuntimeMetadata = settings.lastAutomationRuntimeMetadata,
                 lastAutomationAt = settings.lastAutomationAtEpochMs?.formatTimestamp(),
                 lastCallerHint = settings.lastCallerHint,
                 vpnPermissionReady = VpnService.prepare(getApplication()) == null,
@@ -1847,6 +1942,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
             ),
         )
+        synchronizeConfiguredRuntimeStrategy()
     }
 
     private fun stageAndStartRuntime() {
@@ -1858,7 +1954,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runtimeClient.stageRuntime(
                 plan = uiState.tunnelPlan,
                 compiledConfig = uiState.compiledConfig,
-                profileCanonicalJson = uiState.profile.canonicalJson(),
+                profile = uiState.profile,
                 runtimeStrategy = uiState.automationState.runtimeStrategy,
             )
             runtimeClient.startRuntime()
@@ -1873,6 +1969,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun mutateProfile(
         status: String,
         transform: (ProfileIr) -> ProfileIr,
+        onSuccess: (String) -> Unit = { appliedStatus ->
+            uiState = uiState.copy(
+                regionalBypassStatus = appliedStatus,
+                regionalBypassError = null,
+                showRegionalBypassPrompt = false,
+            )
+        },
+        onFailure: (Throwable) -> Unit = { error ->
+            uiState = uiState.copy(
+                regionalBypassStatus = null,
+                regionalBypassError = error.message ?: error.javaClass.simpleName,
+            )
+        },
     ) {
         runCatching {
             val updatedProfile = transform(uiState.profile)
@@ -1885,16 +1994,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 status = status,
                 showRegionalBypassPrompt = false,
             )
-            uiState = uiState.copy(
-                regionalBypassStatus = status,
-                regionalBypassError = null,
-                showRegionalBypassPrompt = false,
-            )
+            onSuccess(status)
         }.onFailure { error ->
-            uiState = uiState.copy(
-                regionalBypassStatus = null,
-                regionalBypassError = error.message ?: error.javaClass.simpleName,
-            )
+            onFailure(error)
         }
     }
 
@@ -1933,8 +2035,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             routePreviewStale = true,
             profileStorage = profileStorage,
             importPreview = null,
+            connectDecisionPhase = null,
+            connectDecisionMessage = null,
             showRegionalBypassPrompt = showRegionalBypassPrompt ?: uiState.showRegionalBypassPrompt,
+            profileEditorStatus = null,
+            profileEditorError = null,
         )
+        synchronizeConfiguredRuntimeStrategy()
     }
 
     private fun evaluatePreview(
@@ -2016,13 +2123,42 @@ data class MainUiState(
     val importPreview: ImportPreviewState? = null,
     val importStatus: String? = null,
     val importError: String? = null,
+    val connectDecisionPhase: ConnectDecisionPhase? = null,
+    val connectDecisionMessage: String? = null,
     val vpnPermissionGranted: Boolean = false,
     val controlChannelConnected: Boolean = false,
     val controlError: String? = null,
     val regionalBypassStatus: String? = null,
     val regionalBypassError: String? = null,
+    val profileEditorStatus: String? = null,
+    val profileEditorError: String? = null,
     val showRegionalBypassPrompt: Boolean = false,
-)
+) {
+    internal val connectDecision: ConnectDecisionState?
+        get() = connectDecisionPhase?.let { phase ->
+            connectDecisionMessage?.let { message ->
+                ConnectDecisionState(
+                    phase = phase,
+                    message = message,
+                )
+            }
+        }
+
+    internal val runtimeSelection: RuntimeSelectionState
+        get() = runtimeSelectionState(
+            profile = profile,
+            activeStrategyId = runtimeSnapshot.activeStrategy,
+            configuredStrategyId = runtimeSnapshot.configuredStrategy ?: automationState.runtimeStrategy,
+            stagedMetadata = runtimeSnapshot.laneCompatibility,
+            configuredMetadata = runtimeSnapshot.configuredLaneCompatibility,
+        )
+
+    internal val configuredSelection: ConfiguredSelectionState
+        get() = configuredSelectionState(
+            profile = profile,
+            selectedStrategyId = automationState.runtimeStrategy,
+        )
+}
 
 data class EgressObservationState(
     val phase: EgressObservationPhase = EgressObservationPhase.IDLE,
@@ -2139,6 +2275,9 @@ data class AutomationState(
     val vpnPermissionReady: Boolean,
     val lastAutomationStatus: String = AutomationCommandStatus.NEVER_RUN.name,
     val lastAutomationError: String? = null,
+    val lastAutomationErrorSection: String? = null,
+    val lastAutomationErrorFieldPath: String? = null,
+    val lastAutomationRuntimeMetadata: AutomationRuntimeMetadata? = null,
     val lastAutomationAt: String? = null,
     val lastCallerHint: String? = null,
     val status: String? = null,

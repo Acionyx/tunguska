@@ -1,5 +1,8 @@
 package io.acionyx.tunguska.vpnservice
 
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.OutboundSecurityId
+import io.acionyx.tunguska.domain.OutboundTransportId
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.api.VpnDirectives
@@ -66,11 +69,36 @@ class TunnelSessionPlannerTest {
             StagedRuntimeRequest(
                 plan = plan,
                 compiledConfig = compiled,
+                profileProtocolId = OutboundProtocolId.VLESS_REALITY,
+                profileTransportId = OutboundTransportId.TCP,
+                profileSecurityId = OutboundSecurityId.REALITY,
+                laneCompatibility = RuntimeLaneCompatibilityMetadata(
+                    statusLabel = "Fallback with limits",
+                    selectedSummaryTitle = "Selected lane can run this VLESS + REALITY over TCP shape, but with engine limits",
+                    recommendedStrategyId = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                    recommendation = "Recommended lane: sing-box embedded. It supports this profile shape with fewer engine limits on Android.",
+                ),
             ),
         )
 
         assertEquals(VpnRuntimePhase.STAGED, snapshot.phase)
         assertEquals("abc123", snapshot.configHash)
+        assertEquals(OutboundProtocolId.VLESS_REALITY, snapshot.profileProtocolId)
+        assertEquals(OutboundTransportId.TCP, snapshot.profileTransportId)
+        assertEquals(OutboundSecurityId.REALITY, snapshot.profileSecurityId)
+        assertEquals("Fallback with limits", snapshot.laneCompatibility?.statusLabel)
+        assertEquals("Fallback with limits", snapshot.configuredLaneCompatibility?.statusLabel)
+        assertEquals(
+            "Selected lane can run this VLESS + REALITY over TCP shape, but with engine limits",
+            snapshot.laneCompatibility?.selectedSummaryTitle,
+        )
+        assertEquals(
+            "Selected lane can run this VLESS + REALITY over TCP shape, but with engine limits",
+            snapshot.configuredLaneCompatibility?.selectedSummaryTitle,
+        )
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, snapshot.laneCompatibility?.recommendedStrategyId)
+        assertEquals(RuntimeConfigSource.CANONICAL_PROFILE_REBUILD, snapshot.runtimeConfigSource)
+        assertEquals(RuntimeConfigSource.CANONICAL_PROFILE_REBUILD, snapshot.configuredRuntimeConfigSource)
         assertEquals("singbox", snapshot.engineId)
         assertEquals("application/json", snapshot.engineFormat)
         assertEquals(2, snapshot.compiledPayloadBytes)
@@ -99,6 +127,49 @@ class TunnelSessionPlannerTest {
         )
 
         assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, snapshot.activeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, snapshot.configuredStrategy)
+        assertEquals(RuntimeConfigSource.STAGED_ENGINE_PAYLOAD, snapshot.runtimeConfigSource)
+        assertEquals(RuntimeConfigSource.STAGED_ENGINE_PAYLOAD, snapshot.configuredRuntimeConfigSource)
+    }
+
+    @Test
+    fun `configured next start strategy can differ from active strategy and survives stop`() {
+        val compiled = sampleCompiled(
+            VpnDirectives(
+                preserveLoopback = true,
+                splitTunnelMode = SplitTunnelMode.FullTunnel,
+                safeMode = true,
+            ),
+        )
+        val plan = TunnelSessionPlanner.plan(compiled)
+
+        VpnRuntimeStore.stage(
+            StagedRuntimeRequest(
+                plan = plan,
+                compiledConfig = compiled,
+                runtimeStrategy = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+            ),
+        )
+
+        val updated = VpnRuntimeStore.recordConfiguredStrategy(
+            strategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+            laneCompatibility = RuntimeLaneCompatibilityMetadata(
+                statusLabel = "Clean match",
+                selectedSummaryTitle = "Configured lane metadata",
+                recommendedStrategyId = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                recommendation = null,
+            ),
+        )
+
+        assertEquals(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS, updated.activeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, updated.configuredStrategy)
+        assertEquals(RuntimeConfigSource.CANONICAL_PROFILE_REBUILD, updated.runtimeConfigSource)
+        assertEquals(RuntimeConfigSource.STAGED_ENGINE_PAYLOAD, updated.configuredRuntimeConfigSource)
+        assertEquals("Clean match", updated.configuredLaneCompatibility?.statusLabel)
+        val stopped = VpnRuntimeStore.stop()
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, stopped.configuredStrategy)
+        assertEquals(RuntimeConfigSource.STAGED_ENGINE_PAYLOAD, stopped.configuredRuntimeConfigSource)
+        assertEquals("Clean match", stopped.configuredLaneCompatibility?.statusLabel)
     }
 
     @Test
@@ -279,6 +350,70 @@ class TunnelSessionPlannerTest {
         assertEquals(9012L, hosted.lastEngineHostAtEpochMs)
         assertEquals("Prepared embedded sing-box workspace.", hosted.lastEngineHostSummary)
         assertEquals("C:/tmp/runtime/session-1", hosted.sessionWorkspacePath)
+    }
+
+    @Test
+    fun `runtime store records structured engine host failure metadata`() {
+        val compiled = sampleCompiled(
+            VpnDirectives(
+                preserveLoopback = true,
+                splitTunnelMode = SplitTunnelMode.FullTunnel,
+                safeMode = true,
+            ),
+        )
+        VpnRuntimeStore.stage(
+            StagedRuntimeRequest(
+                plan = TunnelSessionPlanner.plan(compiled),
+                compiledConfig = compiled,
+            ),
+        )
+
+        val hosted = VpnRuntimeStore.recordEngineHost(
+            EmbeddedEngineHostResult(
+                status = EmbeddedEngineHostStatus.FAILED,
+                summary = "The xray+tun2socks compatibility lane could not compile the VLESS + REALITY over TCP shape while compiling the Routing section (routing.rules): Routing rule 'package-only' uses only criteria unsupported by the xray+tun2socks compatibility lane: packageNames.",
+                preparedAtEpochMs = 9012L,
+                workspacePath = "C:/tmp/runtime/session-2",
+                errorSection = "Routing",
+                errorFieldPath = "routing.rules",
+            ),
+        )
+
+        assertEquals(EmbeddedEngineHostStatus.FAILED, hosted.engineHostStatus)
+        assertEquals("The xray+tun2socks compatibility lane could not compile the VLESS + REALITY over TCP shape while compiling the Routing section (routing.rules): Routing rule 'package-only' uses only criteria unsupported by the xray+tun2socks compatibility lane: packageNames.", hosted.lastError)
+        assertEquals("Routing", hosted.lastErrorSection)
+        assertEquals("routing.rules", hosted.lastErrorFieldPath)
+    }
+
+    @Test
+    fun `runtime store records structured engine session failure metadata`() {
+        val compiled = sampleCompiled(
+            VpnDirectives(
+                preserveLoopback = true,
+                splitTunnelMode = SplitTunnelMode.FullTunnel,
+                safeMode = true,
+            ),
+        )
+        VpnRuntimeStore.stage(
+            StagedRuntimeRequest(
+                plan = TunnelSessionPlanner.plan(compiled),
+                compiledConfig = compiled,
+            ),
+        )
+
+        val started = VpnRuntimeStore.recordEngineSession(
+            EmbeddedEngineSessionResult(
+                status = EmbeddedEngineSessionStatus.FAILED,
+                summary = "The xray+tun2socks compatibility lane could not compile the VLESS + REALITY over TCP shape while compiling the Routing section (routing.rules): Routing rule 'package-only' uses only criteria unsupported by the xray+tun2socks compatibility lane: packageNames.",
+                observedAtEpochMs = 9020L,
+                errorSection = "Routing",
+                errorFieldPath = "routing.rules",
+            ),
+        )
+
+        assertEquals(EmbeddedEngineSessionStatus.FAILED, started.engineSessionStatus)
+        assertEquals("Routing", started.lastErrorSection)
+        assertEquals("routing.rules", started.lastErrorFieldPath)
     }
 
     @Test

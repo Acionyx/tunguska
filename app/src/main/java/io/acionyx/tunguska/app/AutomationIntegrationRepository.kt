@@ -79,6 +79,9 @@ class AutomationIntegrationRepository(
             token = current.token ?: generateToken(),
             lastAutomationStatus = current.lastAutomationStatus,
             lastAutomationError = null,
+            lastAutomationErrorSection = null,
+            lastAutomationErrorFieldPath = null,
+            lastAutomationRuntimeMetadata = current.lastAutomationRuntimeMetadata,
         )
         return save(enabled)
     }
@@ -89,6 +92,9 @@ class AutomationIntegrationRepository(
             token = null,
             lastAutomationStatus = AutomationCommandStatus.AUTOMATION_DISABLED,
             lastAutomationError = null,
+            lastAutomationErrorSection = null,
+            lastAutomationErrorFieldPath = null,
+            lastAutomationRuntimeMetadata = null,
             lastAutomationAtEpochMs = clock(),
             lastCallerHint = null,
         ),
@@ -102,6 +108,9 @@ class AutomationIntegrationRepository(
             token = generateToken(),
             lastAutomationStatus = current.lastAutomationStatus,
             lastAutomationError = null,
+            lastAutomationErrorSection = null,
+            lastAutomationErrorFieldPath = null,
+            lastAutomationRuntimeMetadata = current.lastAutomationRuntimeMetadata,
             lastAutomationAtEpochMs = clock(),
             ),
         )
@@ -122,11 +131,17 @@ class AutomationIntegrationRepository(
     fun recordResult(
         status: AutomationCommandStatus,
         error: String? = null,
+        errorSection: String? = null,
+        errorFieldPath: String? = null,
+        runtimeMetadata: AutomationRuntimeMetadata? = null,
         callerHint: String? = null,
     ): AutomationIntegrationSettings = save(
         load().copy(
             lastAutomationStatus = status,
             lastAutomationError = error,
+            lastAutomationErrorSection = errorSection,
+            lastAutomationErrorFieldPath = errorFieldPath,
+            lastAutomationRuntimeMetadata = runtimeMetadata,
             lastAutomationAtEpochMs = clock(),
             lastCallerHint = callerHint?.trim()?.takeIf { it.isNotEmpty() }?.take(64),
         ),
@@ -173,6 +188,9 @@ data class AutomationIntegrationSettings(
     val runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     val lastAutomationStatus: AutomationCommandStatus = AutomationCommandStatus.NEVER_RUN,
     val lastAutomationError: String? = null,
+    val lastAutomationErrorSection: String? = null,
+    val lastAutomationErrorFieldPath: String? = null,
+    val lastAutomationRuntimeMetadata: AutomationRuntimeMetadata? = null,
     val lastAutomationAtEpochMs: Long? = null,
     val lastCallerHint: String? = null,
 )
@@ -184,6 +202,9 @@ private data class StoredAutomationIntegration(
     val runtimeStrategy: String = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS.name,
     val lastAutomationStatus: String = AutomationCommandStatus.NEVER_RUN.name,
     val lastAutomationError: String? = null,
+    val lastAutomationErrorSection: String? = null,
+    val lastAutomationErrorFieldPath: String? = null,
+    val lastAutomationRuntimeMetadata: AutomationRuntimeMetadata? = null,
     val lastAutomationAtEpochMs: Long? = null,
     val lastCallerHint: String? = null,
 )
@@ -196,6 +217,9 @@ private fun StoredAutomationIntegration.toSettings(): AutomationIntegrationSetti
     lastAutomationStatus = lastAutomationStatus
         .let { value -> runCatching { AutomationCommandStatus.valueOf(value) }.getOrDefault(AutomationCommandStatus.NEVER_RUN) },
     lastAutomationError = lastAutomationError,
+    lastAutomationErrorSection = lastAutomationErrorSection,
+    lastAutomationErrorFieldPath = lastAutomationErrorFieldPath,
+    lastAutomationRuntimeMetadata = lastAutomationRuntimeMetadata,
     lastAutomationAtEpochMs = lastAutomationAtEpochMs,
     lastCallerHint = lastCallerHint,
 )
@@ -206,6 +230,9 @@ private fun AutomationIntegrationSettings.toStored(): StoredAutomationIntegratio
     runtimeStrategy = runtimeStrategy.name,
     lastAutomationStatus = lastAutomationStatus.name,
     lastAutomationError = lastAutomationError,
+    lastAutomationErrorSection = lastAutomationErrorSection,
+    lastAutomationErrorFieldPath = lastAutomationErrorFieldPath,
+    lastAutomationRuntimeMetadata = lastAutomationRuntimeMetadata,
     lastAutomationAtEpochMs = lastAutomationAtEpochMs,
     lastCallerHint = lastCallerHint,
 )

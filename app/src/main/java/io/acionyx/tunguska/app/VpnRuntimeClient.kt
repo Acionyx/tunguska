@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Message
 import android.os.Messenger
+import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.RuntimeEgressIpObservation
@@ -17,6 +18,7 @@ import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.VpnRuntimeContract
 import io.acionyx.tunguska.vpnservice.VpnRuntimeControlService
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import io.acionyx.tunguska.vpnservice.toStagedRuntimeRequest
 
 class VpnRuntimeClient(
     context: Context,
@@ -83,17 +85,32 @@ class VpnRuntimeClient(
     fun stageRuntime(
         plan: TunnelSessionPlan,
         compiledConfig: CompiledEngineConfig,
-        profileCanonicalJson: String,
+        profile: ProfileIr,
         runtimeStrategy: EmbeddedRuntimeStrategyId = EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
     ) {
+        val guidance = StrategyCapabilityRegistry.evaluateProfileGuidance(profile, runtimeStrategy)
         send(
             VpnRuntimeContract.stageRuntimeMessage(
-                request = StagedRuntimeRequest(
+                request = profile.toStagedRuntimeRequest(
                     plan = plan,
                     compiledConfig = compiledConfig,
-                    profileCanonicalJson = profileCanonicalJson,
                     runtimeStrategy = runtimeStrategy,
+                    laneCompatibility = stagedRuntimeLaneCompatibilityMetadata(runtimeStrategy, guidance),
                 ),
+                replyTo = replyMessenger,
+            ),
+        )
+    }
+
+    fun syncConfiguredRuntimeStrategy(
+        profile: ProfileIr,
+        strategy: EmbeddedRuntimeStrategyId,
+    ) {
+        val guidance = StrategyCapabilityRegistry.evaluateProfileGuidance(profile, strategy)
+        send(
+            VpnRuntimeContract.configuredRuntimeStrategyMessage(
+                strategy = strategy,
+                laneCompatibility = stagedRuntimeLaneCompatibilityMetadata(strategy, guidance),
                 replyTo = replyMessenger,
             ),
         )

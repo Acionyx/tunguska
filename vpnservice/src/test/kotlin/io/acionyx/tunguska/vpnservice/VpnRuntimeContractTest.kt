@@ -1,9 +1,6 @@
 package io.acionyx.tunguska.vpnservice
 
-import io.acionyx.tunguska.domain.SplitTunnelMode
-import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
-import io.acionyx.tunguska.engine.api.VpnDirectives
 import kotlin.test.assertEquals
 import org.junit.Test
 

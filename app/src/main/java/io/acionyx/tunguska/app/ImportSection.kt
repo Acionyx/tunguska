@@ -52,6 +52,8 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -64,6 +66,8 @@ fun ImportSection(
     onDiscardImport: () -> Unit,
     onQrPayloadDetected: (String, ImportCaptureSource) -> Unit,
     onImportError: (String) -> Unit,
+    onUseRecommendedStrategy: (EmbeddedRuntimeStrategyId) -> Unit,
+    onOpenAdvancedDiagnostics: () -> Unit,
 ) {
     val context = LocalContext.current
     val compactLayout = LocalConfiguration.current.screenWidthDp <= 320
@@ -176,6 +180,14 @@ fun ImportSection(
                 }
 
                 state.importPreview?.let { preview ->
+                    val compatibilitySelection = importConfiguredSelectionState(
+                        selectedStrategyId = state.automationState.runtimeStrategy,
+                        severity = preview.compatibilitySeverity,
+                        selectedSummaryTitle = preview.compatibilityTitle,
+                        selectedSummaryDetails = preview.compatibilityDetails,
+                        recommendedStrategyId = preview.recommendedStrategyId,
+                        recommendation = preview.recommendation,
+                    )
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         color = TunguskaTheme.surface.copy(alpha = 0.72f),
@@ -190,8 +202,86 @@ fun ImportSection(
                             Text("Review before saving", style = MaterialTheme.typography.titleLarge)
                             Text("Source: ${preview.source.summary()}", style = MaterialTheme.typography.bodyMedium, color = TunguskaTheme.mutedText)
                             Text("Profile: ${preview.profileName}", style = MaterialTheme.typography.bodyMedium)
-                            Text("Endpoint: ${preview.endpointSummary}", style = MaterialTheme.typography.bodyMedium)
+                            ProtocolSpecificImportReviewSummary(preview = preview)
                             Text("Canonical hash: ${abbreviateImportHash(preview.profileHash)}", style = MaterialTheme.typography.bodyMedium)
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag(UiTags.IMPORT_PREVIEW_COMPATIBILITY_CARD),
+                                color = TunguskaTheme.surfaceStrong.copy(alpha = 0.72f),
+                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                shape = RoundedCornerShape(18.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (preview.compatibilitySeverity == StrategyCompatibilitySeverity.READY) {
+                                        TunguskaTheme.accent.copy(alpha = 0.24f)
+                                    } else {
+                                        TunguskaTheme.warning.copy(alpha = 0.32f)
+                                    },
+                                ),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text("Runtime compatibility", style = MaterialTheme.typography.titleMedium)
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        ImportStatusChip(
+                                            text = compatibilitySelection.selectedLaneLabel,
+                                            accent = if (state.automationState.runtimeStrategy == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                                                TunguskaTheme.accentDim
+                                            } else {
+                                                TunguskaTheme.warning
+                                            },
+                                        )
+                                        ImportStatusChip(
+                                            text = compatibilitySelection.statusLabel,
+                                            accent = if (compatibilitySelection.selectedSeverity == StrategyCompatibilitySeverity.READY) {
+                                                TunguskaTheme.accent
+                                            } else {
+                                                TunguskaTheme.warning
+                                            },
+                                        )
+                                        compatibilitySelection.recommendedLaneLabel?.let { label ->
+                                            ImportStatusChip(
+                                                text = label,
+                                                accent = TunguskaTheme.warning,
+                                            )
+                                        }
+                                    }
+                                    CompatibilityLimitSummary(
+                                        title = compatibilitySelection.selectedSummaryTitle,
+                                        severity = compatibilitySelection.selectedSeverity,
+                                        details = compatibilitySelection.selectedSummaryDetails,
+                                        onOpenAdvancedDiagnostics = onOpenAdvancedDiagnostics,
+                                        recommendation = compatibilitySelection.recommendation,
+                                        color = TunguskaTheme.bodyText,
+                                    )
+                                    compatibilitySelection.recommendation?.let { recommendation ->
+                                        Text(recommendation, style = MaterialTheme.typography.bodyMedium, color = TunguskaTheme.warning)
+                                    }
+                                    compatibilitySelection.recommendedStrategyId?.let { strategyId ->
+                                        OutlinedButton(
+                                            onClick = { onUseRecommendedStrategy(strategyId) },
+                                            modifier = Modifier.testTag(UiTags.IMPORT_USE_RECOMMENDED_STRATEGY_BUTTON),
+                                            shape = RoundedCornerShape(999.dp),
+                                            border = BorderStroke(1.dp, TunguskaTheme.stroke),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TunguskaTheme.accent),
+                                        ) {
+                                            Text(
+                                                if (strategyId == EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED) {
+                                                    "Use sing-box embedded"
+                                                } else {
+                                                    "Use xray+tun2socks"
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             preview.warnings.forEach { warning ->
                                 Text("Warning: $warning", style = MaterialTheme.typography.bodyMedium, color = TunguskaTheme.warning)
                             }
@@ -233,6 +323,25 @@ fun ImportSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ImportStatusChip(
+    text: String,
+    accent: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = accent.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = accent,
+        )
     }
 }
 
@@ -389,6 +498,22 @@ private fun newQrScannerClient() = BarcodeScanning.getClient(
         .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
         .build(),
 )
+
+@Composable
+private fun ProtocolSpecificImportReviewSummary(preview: ImportPreviewState) {
+    when (preview.protocolId) {
+        OutboundProtocolId.VLESS_REALITY -> VlessRealityImportReviewSummary(preview)
+    }
+}
+
+@Composable
+private fun VlessRealityImportReviewSummary(preview: ImportPreviewState) {
+    Text("Shape: ${preview.shapeLabel}", style = MaterialTheme.typography.bodyMedium)
+    Text("Protocol: ${preview.protocolLabel}", style = MaterialTheme.typography.bodyMedium)
+    Text("Transport: ${preview.transportLabel}", style = MaterialTheme.typography.bodyMedium)
+    Text("Security: ${preview.securityLabel}", style = MaterialTheme.typography.bodyMedium)
+    Text("Endpoint: ${preview.endpointSummary}", style = MaterialTheme.typography.bodyMedium)
+}
 
 @Composable
 private fun ImportActionGroup(

@@ -13,9 +13,12 @@ import io.acionyx.tunguska.domain.DnsMode
 import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.NetworkProtocol
+import io.acionyx.tunguska.domain.OutboundProtocolId
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteRule
+import io.acionyx.tunguska.domain.displayLabel
+import io.acionyx.tunguska.domain.outboundShapeLabel
 import java.io.File
 import java.net.InetAddress
 import java.net.URI
@@ -30,6 +33,70 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+internal object XrayCompatLaneMessaging {
+    fun stagedShapeLabel(request: StagedRuntimeRequest): String? {
+        val protocolId = request.profileProtocolId ?: return null
+        val transportId = request.profileTransportId ?: return null
+        return outboundShapeLabel(protocolId, transportId, request.profileSecurityId)
+    }
+
+    fun canonicalPayloadRequiredSummary(request: StagedRuntimeRequest): String {
+        val stagedShape = stagedShapeLabel(request)
+        return if (stagedShape != null) {
+            "The xray+tun2socks runtime requires the canonical profile payload to rebuild the staged $stagedShape shape for fallback compilation."
+        } else {
+            "The xray+tun2socks runtime requires the canonical profile payload for fallback compilation."
+        }
+    }
+
+    fun canonicalDecodeFailureSummary(
+        request: StagedRuntimeRequest,
+        error: Throwable,
+    ): String {
+        val detail = error.message ?: error.javaClass.simpleName
+        val stagedShape = stagedShapeLabel(request)
+        return if (stagedShape != null) {
+            "The xray+tun2socks runtime could not decode the canonical profile payload for the staged $stagedShape shape: $detail"
+        } else {
+            "The xray+tun2socks runtime could not decode the canonical profile payload: $detail"
+        }
+    }
+
+    fun validationFailureSummary(
+        profile: ProfileIr,
+        issuesSummary: String,
+    ): String = "Fallback validation failed for the ${profile.outboundShapeLabel()} shape: $issuesSummary"
+
+    fun compileFailureSummary(
+        profile: ProfileIr,
+        error: Throwable,
+    ): String {
+        val sectionDetail = (error as? XrayCompatCompileException)
+            ?.let {
+                " while compiling the ${it.section.displayLabel} section"
+            }
+            .orEmpty()
+        return "The xray+tun2socks compatibility lane could not compile the ${profile.outboundShapeLabel()} shape$sectionDetail: ${error.message ?: error.javaClass.simpleName}"
+    }
+
+    fun preparedSummary(
+        request: StagedRuntimeRequest,
+        profile: ProfileIr,
+    ): String = "Prepared xray+tun2socks runtime for ${profile.outboundShapeLabel()} (${request.compiledConfig.configHash.take(12)})."
+}
+
+internal enum class XrayCompatCompileSection(val displayLabel: String) {
+    DNS("DNS"),
+    ROUTING("Routing"),
+}
+
+internal class XrayCompatCompileException(
+    val section: XrayCompatCompileSection,
+    val fieldPath: String,
+    message: String,
+    cause: Throwable? = null,
+) : IllegalArgumentException(message, cause)
 
 class XrayTun2SocksEmbeddedHost(
     private val clock: () -> Long = System::currentTimeMillis,
@@ -56,21 +123,24 @@ class XrayTun2SocksEmbeddedHost(
         val profileCanonicalJson = request.profileCanonicalJson
             ?: return failure(
                 workspace = workspace,
-                summary = "The xray+tun2socks runtime requires the canonical profile payload for fallback compilation.",
+                summary = XrayCompatLaneMessaging.canonicalPayloadRequiredSummary(request),
             )
         val profile = runCatching {
             CanonicalJson.instance.decodeFromString<ProfileIr>(profileCanonicalJson)
         }.getOrElse { error ->
             return failure(
                 workspace = workspace,
-                summary = error.message ?: error.javaClass.simpleName,
+                summary = XrayCompatLaneMessaging.canonicalDecodeFailureSummary(request, error),
             )
         }
         val issues = profile.validate()
         if (issues.isNotEmpty()) {
             return failure(
                 workspace = workspace,
-                summary = "Fallback profile validation failed: ${issues.joinToString { issue -> "${issue.field}: ${issue.message}" }}",
+                summary = XrayCompatLaneMessaging.validationFailureSummary(
+                    profile = profile,
+                    issuesSummary = issues.joinToString { issue -> "${issue.field}: ${issue.message}" },
+                ),
             )
         }
         val binaries = runCatching {
@@ -111,7 +181,7 @@ class XrayTun2SocksEmbeddedHost(
         return EmbeddedEngineHostPreparation(
             result = EmbeddedEngineHostResult(
                 status = EmbeddedEngineHostStatus.READY,
-                summary = "Prepared xray+tun2socks runtime for ${request.compiledConfig.configHash.take(12)}.",
+                summary = XrayCompatLaneMessaging.preparedSummary(request, profile),
                 preparedAtEpochMs = clock(),
                 workspacePath = workspace.rootDir.absolutePath,
             ),
@@ -129,12 +199,15 @@ class XrayTun2SocksEmbeddedHost(
     private fun failure(
         workspace: EngineSessionWorkspace,
         summary: String,
+        error: Throwable? = null,
     ): EmbeddedEngineHostPreparation = EmbeddedEngineHostPreparation(
         result = EmbeddedEngineHostResult(
             status = EmbeddedEngineHostStatus.FAILED,
             summary = summary,
             preparedAtEpochMs = clock(),
             workspacePath = workspace.rootDir.absolutePath,
+            errorSection = (error as? XrayCompatCompileException)?.section?.displayLabel,
+            errorFieldPath = (error as? XrayCompatCompileException)?.fieldPath,
         ),
     )
 }
@@ -167,11 +240,14 @@ private class XrayTun2SocksEmbeddedEngineSession(
         val compiled = runCatching {
             XrayCompatConfigCompiler.compile(profile = profile, bridge = bridge)
         }.getOrElse { error ->
-            return failure(error.message ?: error.javaClass.simpleName)
+            return failure(
+                XrayCompatLaneMessaging.compileFailureSummary(profile, error),
+                error,
+            )
         }
         Log.i(
             TAG,
-            "Preparing xray+tun2socks profile='${profile.name}' config='${request.compiledConfig.configHash.take(12)}'.",
+            "Preparing xray+tun2socks ${profile.outboundShapeLabel()} profile='${profile.name}' config='${request.compiledConfig.configHash.take(12)}'.",
         )
         val xrayConfigFile = File(workspace.rootDir, "xray-runtime.json").apply {
             writeText(compiled.json)
@@ -476,10 +552,15 @@ private class XrayTun2SocksEmbeddedEngineSession(
         return File("/proc/$pid/stat").exists()
     }
 
-    private fun failure(message: String): EmbeddedEngineSessionResult = EmbeddedEngineSessionResult(
+    private fun failure(
+        message: String,
+        error: Throwable? = null,
+    ): EmbeddedEngineSessionResult = EmbeddedEngineSessionResult(
         status = EmbeddedEngineSessionStatus.FAILED,
         summary = message,
         observedAtEpochMs = clock(),
+        errorSection = (error as? XrayCompatCompileException)?.section?.displayLabel,
+        errorFieldPath = (error as? XrayCompatCompileException)?.fieldPath,
     )
 }
 
@@ -709,76 +790,12 @@ internal data class CompiledXrayRuntimeConfig(
     val vpnDnsServers: List<String>,
 )
 
-internal object XrayCompatConfigCompiler {
-    fun compile(
-        profile: ProfileIr,
-        bridge: AuthenticatedLocalBridge,
-    ): CompiledXrayRuntimeConfig {
-        val dnsPlan = XrayDnsPlan.from(profile.dns)
-        val root = buildJsonObject {
-            put("log", buildJsonObject {
-                put("loglevel", "warning")
-            })
-            put("dns", dnsPlan.xrayDns)
-            put("inbounds", buildJsonArray {
-                add(socksInbound(bridge))
-            })
-            put("outbounds", buildJsonArray {
-                add(proxyOutbound(profile))
-                add(taggedOutbound("direct", "freedom"))
-                add(taggedOutbound("block", "blackhole"))
-                add(taggedOutbound("dns-out", "dns"))
-            })
-            put("routing", routing(profile, dnsPlan))
-            put("policy", buildJsonObject {
-                put("levels", buildJsonObject {
-                    put(
-                        "0",
-                        buildJsonObject {
-                            put("handshake", 4)
-                            put("connIdle", 120)
-                            put("uplinkOnly", 5)
-                            put("downlinkOnly", 30)
-                        },
-                    )
-                })
-            })
-        }
-        return CompiledXrayRuntimeConfig(
-            json = CanonicalJson.instance.encodeToString(JsonObject.serializer(), root),
-            vpnDnsServers = dnsPlan.vpnDnsServers,
-        )
+internal object XrayCompatOutboundCompiler {
+    fun compile(profile: ProfileIr): JsonObject = when (profile.outboundProtocolId) {
+        OutboundProtocolId.VLESS_REALITY -> vlessRealityOutbound(profile)
     }
 
-    private fun socksInbound(bridge: AuthenticatedLocalBridge): JsonObject = buildJsonObject {
-        put("tag", "socks-in")
-        put("protocol", "socks")
-        put("listen", "127.0.0.1")
-        put("port", bridge.port)
-        put("settings", buildJsonObject {
-            put("auth", "password")
-            put("ip", "127.0.0.1")
-            put("udp", true)
-            put("accounts", buildJsonArray {
-                add(
-                    buildJsonObject {
-                        put("user", bridge.user)
-                        put("pass", bridge.password)
-                    },
-                )
-            })
-        })
-        put("sniffing", buildJsonObject {
-            put("enabled", true)
-            put("routeOnly", false)
-            put("destOverride", buildJsonArray {
-                add(JsonPrimitive("http"))
-                add(JsonPrimitive("tls"))
-            })
-        })
-    }
-
-    private fun proxyOutbound(profile: ProfileIr): JsonObject = buildJsonObject {
+    private fun vlessRealityOutbound(profile: ProfileIr): JsonObject = buildJsonObject {
         put("tag", "proxy")
         put("protocol", "vless")
         put("settings", buildJsonObject {
@@ -812,13 +829,101 @@ internal object XrayCompatConfigCompiler {
             })
         })
     }
+}
+
+internal object XrayCompatCompilerErrors {
+    fun unsupportedRouteCriteria(
+        rule: RouteRule,
+        unsupportedCriteria: List<String>,
+    ): XrayCompatCompileException = XrayCompatCompileException(
+        section = XrayCompatCompileSection.ROUTING,
+        fieldPath = "routing.rules",
+        message = buildString {
+            append("Routing rule '")
+            append(rule.id)
+            append("' uses only criteria unsupported by the xray+tun2socks compatibility lane")
+            if (unsupportedCriteria.isNotEmpty()) {
+                append(": ")
+                append(unsupportedCriteria.joinToString())
+            }
+            append('.')
+        },
+    )
+
+    fun invalidDotDnsEndpoint(
+        endpoint: String,
+        cause: Throwable? = null,
+    ): XrayCompatCompileException = XrayCompatCompileException(
+        section = XrayCompatCompileSection.DNS,
+        fieldPath = "dns.endpoints",
+        message = "DNS endpoint '$endpoint' is not a valid DoT address for the xray+tun2socks compatibility lane.",
+        cause = cause,
+    )
+}
+
+private object XrayCompatInfrastructureCompiler {
+    fun socksInbound(bridge: AuthenticatedLocalBridge): JsonObject = buildJsonObject {
+        put("tag", "socks-in")
+        put("protocol", "socks")
+        put("listen", "127.0.0.1")
+        put("port", bridge.port)
+        put("settings", buildJsonObject {
+            put("auth", "password")
+            put("ip", "127.0.0.1")
+            put("udp", true)
+            put("accounts", buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("user", bridge.user)
+                        put("pass", bridge.password)
+                    },
+                )
+            })
+        })
+        put("sniffing", buildJsonObject {
+            put("enabled", true)
+            put("routeOnly", false)
+            put("destOverride", buildJsonArray {
+                add(JsonPrimitive("http"))
+                add(JsonPrimitive("tls"))
+            })
+        })
+    }
+
+    fun staticOutbounds(): List<JsonObject> = listOf(
+        taggedOutbound("direct", "freedom"),
+        taggedOutbound("block", "blackhole"),
+        taggedOutbound("dns-out", "dns"),
+    )
 
     private fun taggedOutbound(tag: String, protocol: String): JsonObject = buildJsonObject {
         put("tag", tag)
         put("protocol", protocol)
     }
+}
 
-    private fun routing(
+private object XrayCompatRuntimeDefaultsCompiler {
+    fun logConfig(): JsonObject = buildJsonObject {
+        put("loglevel", "warning")
+    }
+
+    fun policyConfig(): JsonObject = buildJsonObject {
+        put("levels", buildJsonObject {
+            put(
+                "0",
+                buildJsonObject {
+                    put("handshake", 4)
+                    put("connIdle", 120)
+                    put("uplinkOnly", 5)
+                    put("downlinkOnly", 30)
+                },
+            )
+        })
+    }
+}
+
+private object XrayCompatRoutingCompiler {
+    fun compile(
         profile: ProfileIr,
         dnsPlan: XrayDnsPlan,
     ): JsonObject = buildJsonObject {
@@ -868,19 +973,16 @@ internal object XrayCompatConfigCompiler {
             if (rule.match.asns.isNotEmpty()) add("asn")
             if (rule.match.packageNames.isNotEmpty()) add("packageNames")
         }
-        require(
-            domains.isNotEmpty() ||
-                ips.isNotEmpty() ||
-                rule.match.ports.isNotEmpty() ||
-                rule.match.protocols.isNotEmpty(),
+        if (
+            domains.isEmpty() &&
+            ips.isEmpty() &&
+            rule.match.ports.isEmpty() &&
+            rule.match.protocols.isEmpty()
         ) {
-            buildString {
-                append("Route rule '${rule.id}' contains only unsupported Xray criteria")
-                if (unsupportedCriteria.isNotEmpty()) {
-                    append(": ${unsupportedCriteria.joinToString()}")
-                }
-                append('.')
-            }
+            throw XrayCompatCompilerErrors.unsupportedRouteCriteria(
+                rule = rule,
+                unsupportedCriteria = unsupportedCriteria,
+            )
         }
         return buildJsonObject {
             put("type", "field")
@@ -914,107 +1016,142 @@ internal object XrayCompatConfigCompiler {
     }
 }
 
+internal object XrayCompatConfigCompiler {
+    fun compile(
+        profile: ProfileIr,
+        bridge: AuthenticatedLocalBridge,
+    ): CompiledXrayRuntimeConfig {
+        val dnsPlan = XrayCompatDnsCompiler.compile(profile.dns)
+        val root = buildJsonObject {
+            put("log", XrayCompatRuntimeDefaultsCompiler.logConfig())
+            put("dns", dnsPlan.xrayDns)
+            put("inbounds", buildJsonArray {
+                add(XrayCompatInfrastructureCompiler.socksInbound(bridge))
+            })
+            put("outbounds", buildJsonArray {
+                add(XrayCompatOutboundCompiler.compile(profile))
+                XrayCompatInfrastructureCompiler.staticOutbounds().forEach(::add)
+            })
+            put("routing", XrayCompatRoutingCompiler.compile(profile, dnsPlan))
+            put("policy", XrayCompatRuntimeDefaultsCompiler.policyConfig())
+        }
+        return CompiledXrayRuntimeConfig(
+            json = CanonicalJson.instance.encodeToString(JsonObject.serializer(), root),
+            vpnDnsServers = dnsPlan.vpnDnsServers,
+        )
+    }
+}
+
 private data class XrayDnsPlan(
     val xrayDns: JsonObject,
     val vpnDnsServers: List<String>,
     val proxyDns: Boolean,
-) {
-    companion object {
-        fun from(mode: DnsMode): XrayDnsPlan = when (mode) {
-            DnsMode.SystemDns -> {
-                XrayDnsPlan(
-                    xrayDns = buildJsonObject {
-                        put("hosts", buildJsonObject {})
-                        put("servers", buildJsonArray {
-                            add(JsonPrimitive("tcp://1.1.1.1:53"))
-                            add(JsonPrimitive("tcp://1.0.0.1:53"))
-                        })
-                        put("queryStrategy", "UseIPv4")
+)
+
+private object XrayCompatDnsCompiler {
+    fun compile(mode: DnsMode): XrayDnsPlan = when (mode) {
+        DnsMode.SystemDns -> {
+            XrayDnsPlan(
+                xrayDns = buildJsonObject {
+                    put("hosts", buildJsonObject {})
+                    put("servers", buildJsonArray {
+                        add(JsonPrimitive("tcp://1.1.1.1:53"))
+                        add(JsonPrimitive("tcp://1.0.0.1:53"))
+                    })
+                    put("queryStrategy", "UseIPv4")
+                },
+                vpnDnsServers = DEFAULT_VPN_DNS_SERVERS,
+                proxyDns = true,
+            )
+        }
+
+        is DnsMode.VpnDns -> {
+            val servers = mode.servers.map { endpoint ->
+                dnsServerEntry(rawEndpoint = endpoint)
+            }
+            XrayDnsPlan(
+                xrayDns = buildJsonObject {
+                    put("hosts", buildJsonObject {})
+                    put("servers", JsonArray(servers))
+                    put("queryStrategy", "UseIP")
+                },
+                vpnDnsServers = builderDnsServers(mode.servers),
+                proxyDns = true,
+            )
+        }
+
+        is DnsMode.CustomEncrypted -> {
+            val servers = mode.endpoints.map { rawEndpoint ->
+                dnsServerEntry(
+                    rawEndpoint = rawEndpoint,
+                    endpoint = when (mode.kind) {
+                        EncryptedDnsKind.DOH -> ensurePrefixed(rawEndpoint, "https://")
+                        EncryptedDnsKind.DOT -> ensurePrefixed(rawEndpoint, "tls://")
                     },
-                    vpnDnsServers = DEFAULT_VPN_DNS_SERVERS,
-                    proxyDns = true,
                 )
             }
-
-            is DnsMode.VpnDns -> {
-                val servers = mode.servers.map(::dnsServerEntry)
-                XrayDnsPlan(
-                    xrayDns = buildJsonObject {
-                        put("hosts", buildJsonObject {})
-                        put("servers", JsonArray(servers))
-                        put("queryStrategy", "UseIP")
-                    },
-                    vpnDnsServers = builderDnsServers(mode.servers),
-                    proxyDns = true,
-                )
-            }
-
-            is DnsMode.CustomEncrypted -> {
-                val servers = mode.endpoints.map { endpoint ->
-                    dnsServerEntry(
-                        endpoint = when (mode.kind) {
-                            EncryptedDnsKind.DOH -> ensurePrefixed(endpoint, "https://")
-                            EncryptedDnsKind.DOT -> ensurePrefixed(endpoint, "tls://")
-                        },
-                    )
-                }
-                XrayDnsPlan(
-                    xrayDns = buildJsonObject {
-                        put("hosts", buildJsonObject {})
-                        put("servers", JsonArray(servers))
-                        put("queryStrategy", "UseIP")
-                    },
-                    vpnDnsServers = builderDnsServers(mode.endpoints),
-                    proxyDns = true,
-                )
-            }
+            XrayDnsPlan(
+                xrayDns = buildJsonObject {
+                    put("hosts", buildJsonObject {})
+                    put("servers", JsonArray(servers))
+                    put("queryStrategy", "UseIP")
+                },
+                vpnDnsServers = builderDnsServers(mode.endpoints),
+                proxyDns = true,
+            )
         }
-
-        private fun dnsServerEntry(endpoint: String): JsonObject {
-            val normalized = endpoint.trim()
-            return when {
-                normalized.startsWith("https://", ignoreCase = true) -> buildJsonObject {
-                    put("address", normalized)
-                }
-
-                normalized.startsWith("tls://", ignoreCase = true) -> {
-                    val uri = URI(normalized)
-                    val host = uri.host ?: error("Invalid DoT endpoint: $endpoint")
-                    val port = uri.port.takeIf { it > 0 } ?: 853
-                    buildJsonObject {
-                        put("address", "tls+local://$host:$port")
-                    }
-                }
-
-                else -> error("Unsupported DNS endpoint format: $endpoint")
-            }
-        }
-
-        private fun builderDnsServers(endpoints: List<String>): List<String> {
-            val candidates = endpoints.mapNotNull { endpoint ->
-                extractHost(endpoint)?.takeIf(::isIpLiteral)
-            }.distinct()
-            return if (candidates.isEmpty()) DEFAULT_VPN_DNS_SERVERS else candidates
-        }
-
-        private fun extractHost(endpoint: String): String? {
-            val normalized = when {
-                endpoint.startsWith("https://", ignoreCase = true) -> endpoint
-                endpoint.startsWith("tls://", ignoreCase = true) -> endpoint
-                endpoint.contains("://") -> endpoint
-                else -> "tls://$endpoint"
-            }
-            return runCatching { URI(normalized).host }.getOrNull()
-        }
-
-        private fun ensurePrefixed(value: String, prefix: String): String =
-            if (value.startsWith(prefix, ignoreCase = true)) value else "$prefix$value"
-
-        private fun isIpLiteral(value: String): Boolean = runCatching {
-            InetAddress.getByName(value)
-            true
-        }.getOrDefault(false)
     }
+
+    private fun dnsServerEntry(
+        rawEndpoint: String,
+        endpoint: String = rawEndpoint,
+    ): JsonObject {
+        val normalized = endpoint.trim()
+        return when {
+            normalized.startsWith("https://", ignoreCase = true) -> buildJsonObject {
+                put("address", normalized)
+            }
+
+            normalized.startsWith("tls://", ignoreCase = true) -> {
+                val uri = runCatching { URI(normalized) }.getOrElse { error ->
+                        throw XrayCompatCompilerErrors.invalidDotDnsEndpoint(rawEndpoint, error)
+                }
+                val host = uri.host
+                        ?: throw XrayCompatCompilerErrors.invalidDotDnsEndpoint(rawEndpoint)
+                val port = uri.port.takeIf { it > 0 } ?: 853
+                buildJsonObject {
+                    put("address", "tls+local://$host:$port")
+                }
+            }
+
+            else -> error("Unsupported DNS endpoint format: $endpoint")
+        }
+    }
+
+    private fun builderDnsServers(endpoints: List<String>): List<String> {
+        val candidates = endpoints.mapNotNull { endpoint ->
+            extractHost(endpoint)?.takeIf(::isIpLiteral)
+        }.distinct()
+        return if (candidates.isEmpty()) DEFAULT_VPN_DNS_SERVERS else candidates
+    }
+
+    private fun extractHost(endpoint: String): String? {
+        val normalized = when {
+            endpoint.startsWith("https://", ignoreCase = true) -> endpoint
+            endpoint.startsWith("tls://", ignoreCase = true) -> endpoint
+            endpoint.contains("://") -> endpoint
+            else -> "tls://$endpoint"
+        }
+        return runCatching { URI(normalized).host }.getOrNull()
+    }
+
+    private fun ensurePrefixed(value: String, prefix: String): String =
+        if (value.startsWith(prefix, ignoreCase = true)) value else "$prefix$value"
+
+    private fun isIpLiteral(value: String): Boolean = runCatching {
+        InetAddress.getByName(value)
+        true
+    }.getOrDefault(false)
 }
 
 private val DEFAULT_VPN_DNS_SERVERS = listOf("1.1.1.1", "1.0.0.1")

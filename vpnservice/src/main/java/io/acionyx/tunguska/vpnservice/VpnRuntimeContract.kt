@@ -3,6 +3,9 @@ package io.acionyx.tunguska.vpnservice
 import android.os.Bundle
 import android.os.Message
 import android.os.Messenger
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.OutboundSecurityId
+import io.acionyx.tunguska.domain.OutboundTransportId
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
@@ -13,6 +16,7 @@ object VpnRuntimeContract {
     const val MSG_START_RUNTIME: Int = 3
     const val MSG_STOP_RUNTIME: Int = 4
     const val MSG_PROBE_EGRESS_IP: Int = 5
+    const val MSG_SET_CONFIGURED_RUNTIME_STRATEGY: Int = 6
     const val MSG_STATUS: Int = 100
     const val MSG_ERROR: Int = 101
     const val MSG_EGRESS_IP: Int = 102
@@ -31,10 +35,24 @@ object VpnRuntimeContract {
     private const val KEY_ENGINE_RUNTIME_ASSETS = "engine_runtime_assets"
     private const val KEY_PROFILE_CANONICAL_JSON = "profile_canonical_json"
     private const val KEY_REQUESTED_RUNTIME_STRATEGY = "requested_runtime_strategy"
+    private const val KEY_PROFILE_PROTOCOL_ID = "profile_protocol_id"
+    private const val KEY_PROFILE_TRANSPORT_ID = "profile_transport_id"
+    private const val KEY_PROFILE_SECURITY_ID = "profile_security_id"
+    private const val KEY_LANE_COMPATIBILITY_STATUS_LABEL = "lane_compatibility_status_label"
+    private const val KEY_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE = "lane_compatibility_selected_summary_title"
+    private const val KEY_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY = "lane_compatibility_recommended_strategy"
+    private const val KEY_LANE_COMPATIBILITY_RECOMMENDATION = "lane_compatibility_recommendation"
+    private const val KEY_CONFIGURED_LANE_COMPATIBILITY_STATUS_LABEL = "configured_lane_compatibility_status_label"
+    private const val KEY_CONFIGURED_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE = "configured_lane_compatibility_selected_summary_title"
+    private const val KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY = "configured_lane_compatibility_recommended_strategy"
+    private const val KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDATION = "configured_lane_compatibility_recommendation"
 
     private const val KEY_PHASE = "phase"
     private const val KEY_SESSION_LABEL = "session_label"
     private const val KEY_ACTIVE_STRATEGY = "active_strategy"
+    private const val KEY_RUNTIME_CONFIG_SOURCE = "runtime_config_source"
+    private const val KEY_CONFIGURED_STRATEGY = "configured_strategy"
+    private const val KEY_CONFIGURED_RUNTIME_CONFIG_SOURCE = "configured_runtime_config_source"
     private const val KEY_COMPILED_PAYLOAD_BYTES = "compiled_payload_bytes"
     private const val KEY_ENGINE_HOST_STATUS = "engine_host_status"
     private const val KEY_LAST_ENGINE_HOST_AT = "last_engine_host_at"
@@ -69,6 +87,8 @@ object VpnRuntimeContract {
     private const val KEY_LAST_BOOTSTRAP_SUMMARY = "last_bootstrap_summary"
     private const val KEY_SESSION_WORKSPACE_PATH = "session_workspace_path"
     private const val KEY_LAST_ERROR = "last_error"
+    private const val KEY_LAST_ERROR_SECTION = "last_error_section"
+    private const val KEY_LAST_ERROR_FIELD_PATH = "last_error_field_path"
     private const val KEY_ERROR_MESSAGE = "error_message"
     private const val KEY_EGRESS_IP_STATUS = "egress_ip_status"
     private const val KEY_EGRESS_IP_PUBLIC_IP = "egress_ip_public_ip"
@@ -94,6 +114,18 @@ object VpnRuntimeContract {
         this.replyTo = replyTo
     }
 
+    fun configuredRuntimeStrategyMessage(
+        strategy: EmbeddedRuntimeStrategyId,
+        laneCompatibility: RuntimeLaneCompatibilityMetadata,
+        replyTo: Messenger,
+    ): Message = Message.obtain(null, MSG_SET_CONFIGURED_RUNTIME_STRATEGY).apply {
+        data = Bundle().apply {
+            putString(KEY_CONFIGURED_STRATEGY, strategy.name)
+            putConfiguredLaneCompatibility(laneCompatibility)
+        }
+        this.replyTo = replyTo
+    }
+
     fun simpleMessage(what: Int, replyTo: Messenger): Message = Message.obtain(null, what).apply {
         this.replyTo = replyTo
     }
@@ -112,6 +144,10 @@ object VpnRuntimeContract {
             putString(KEY_ENGINE_PAYLOAD, request.compiledConfig.payload)
             putStringArray(KEY_ENGINE_RUNTIME_ASSETS, encodeRuntimeAssets(request.compiledConfig.runtimeAssets))
             putString(KEY_REQUESTED_RUNTIME_STRATEGY, request.runtimeStrategy.name)
+            putString(KEY_PROFILE_PROTOCOL_ID, request.profileProtocolId?.name)
+            putString(KEY_PROFILE_TRANSPORT_ID, request.profileTransportId?.name)
+            putString(KEY_PROFILE_SECURITY_ID, request.profileSecurityId?.name)
+            putLaneCompatibility(request.laneCompatibility)
             request.profileCanonicalJson?.let { profileCanonicalJson ->
                 val profileBytes = profileCanonicalJson.toByteArray(Charsets.UTF_8).size
                 require(profileBytes <= MAX_PROFILE_JSON_BYTES) {
@@ -161,6 +197,10 @@ object VpnRuntimeContract {
             runtimeStrategy = bundle.getString(KEY_REQUESTED_RUNTIME_STRATEGY)
                 ?.let(EmbeddedRuntimeStrategyId::valueOf)
                 ?: EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS,
+            profileProtocolId = bundle.getString(KEY_PROFILE_PROTOCOL_ID)?.let(OutboundProtocolId::valueOf),
+            profileTransportId = bundle.getString(KEY_PROFILE_TRANSPORT_ID)?.let(OutboundTransportId::valueOf),
+            profileSecurityId = bundle.getString(KEY_PROFILE_SECURITY_ID)?.let(OutboundSecurityId::valueOf),
+            laneCompatibility = decodeLaneCompatibility(bundle),
         )
     }
 
@@ -190,6 +230,14 @@ object VpnRuntimeContract {
         putString(KEY_CONFIG_HASH, snapshot.configHash)
         putString(KEY_SESSION_LABEL, snapshot.sessionLabel)
         putString(KEY_ACTIVE_STRATEGY, snapshot.activeStrategy?.name)
+        putString(KEY_RUNTIME_CONFIG_SOURCE, snapshot.runtimeConfigSource?.name)
+        putString(KEY_CONFIGURED_STRATEGY, snapshot.configuredStrategy?.name)
+        putString(KEY_CONFIGURED_RUNTIME_CONFIG_SOURCE, snapshot.configuredRuntimeConfigSource?.name)
+        putConfiguredLaneCompatibility(snapshot.configuredLaneCompatibility)
+        putString(KEY_PROFILE_PROTOCOL_ID, snapshot.profileProtocolId?.name)
+        putString(KEY_PROFILE_TRANSPORT_ID, snapshot.profileTransportId?.name)
+        putString(KEY_PROFILE_SECURITY_ID, snapshot.profileSecurityId?.name)
+        putLaneCompatibility(snapshot.laneCompatibility)
         putString(KEY_ENGINE_ID, snapshot.engineId)
         putString(KEY_ENGINE_FORMAT, snapshot.engineFormat)
         putInt(KEY_COMPILED_PAYLOAD_BYTES, snapshot.compiledPayloadBytes)
@@ -227,6 +275,8 @@ object VpnRuntimeContract {
         putStringArrayList(KEY_RECENT_NATIVE_EVENTS, ArrayList(snapshot.recentNativeEvents))
         putString(KEY_SESSION_WORKSPACE_PATH, snapshot.sessionWorkspacePath)
         putString(KEY_LAST_ERROR, snapshot.lastError)
+        putString(KEY_LAST_ERROR_SECTION, snapshot.lastErrorSection)
+        putString(KEY_LAST_ERROR_FIELD_PATH, snapshot.lastErrorFieldPath)
     }
 
     fun decodeSnapshot(bundle: Bundle): VpnRuntimeSnapshot = VpnRuntimeSnapshot(
@@ -234,6 +284,14 @@ object VpnRuntimeContract {
         configHash = bundle.getString(KEY_CONFIG_HASH),
         sessionLabel = bundle.getString(KEY_SESSION_LABEL),
         activeStrategy = bundle.getString(KEY_ACTIVE_STRATEGY)?.let(EmbeddedRuntimeStrategyId::valueOf),
+        runtimeConfigSource = bundle.getString(KEY_RUNTIME_CONFIG_SOURCE)?.let(RuntimeConfigSource::valueOf),
+        configuredStrategy = bundle.getString(KEY_CONFIGURED_STRATEGY)?.let(EmbeddedRuntimeStrategyId::valueOf),
+        configuredRuntimeConfigSource = bundle.getString(KEY_CONFIGURED_RUNTIME_CONFIG_SOURCE)?.let(RuntimeConfigSource::valueOf),
+        configuredLaneCompatibility = decodeConfiguredLaneCompatibility(bundle),
+        profileProtocolId = bundle.getString(KEY_PROFILE_PROTOCOL_ID)?.let(OutboundProtocolId::valueOf),
+        profileTransportId = bundle.getString(KEY_PROFILE_TRANSPORT_ID)?.let(OutboundTransportId::valueOf),
+        profileSecurityId = bundle.getString(KEY_PROFILE_SECURITY_ID)?.let(OutboundSecurityId::valueOf),
+        laneCompatibility = decodeLaneCompatibility(bundle),
         engineId = bundle.getString(KEY_ENGINE_ID),
         engineFormat = bundle.getString(KEY_ENGINE_FORMAT),
         compiledPayloadBytes = bundle.getInt(KEY_COMPILED_PAYLOAD_BYTES, 0),
@@ -283,9 +341,73 @@ object VpnRuntimeContract {
         recentNativeEvents = bundle.getStringArrayList(KEY_RECENT_NATIVE_EVENTS)?.toList().orEmpty(),
         sessionWorkspacePath = bundle.getString(KEY_SESSION_WORKSPACE_PATH),
         lastError = bundle.getString(KEY_LAST_ERROR),
+        lastErrorSection = bundle.getString(KEY_LAST_ERROR_SECTION),
+        lastErrorFieldPath = bundle.getString(KEY_LAST_ERROR_FIELD_PATH),
     )
 
     fun decodeError(bundle: Bundle): String? = bundle.getString(KEY_ERROR_MESSAGE)
+
+    fun decodeConfiguredRuntimeStrategy(bundle: Bundle): EmbeddedRuntimeStrategyId = checkNotNull(
+        bundle.getString(KEY_CONFIGURED_STRATEGY)?.let(EmbeddedRuntimeStrategyId::valueOf),
+    ) {
+        "Configured runtime strategy is missing from the control message."
+    }
+
+    fun decodeConfiguredLaneCompatibility(bundle: Bundle): RuntimeLaneCompatibilityMetadata? = decodeLaneCompatibility(
+        bundle = bundle,
+        statusLabelKey = KEY_CONFIGURED_LANE_COMPATIBILITY_STATUS_LABEL,
+        selectedSummaryTitleKey = KEY_CONFIGURED_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE,
+        recommendedStrategyKey = KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY,
+        recommendationKey = KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDATION,
+    )
+
+    private fun Bundle.putLaneCompatibility(metadata: RuntimeLaneCompatibilityMetadata?) {
+        putString(KEY_LANE_COMPATIBILITY_STATUS_LABEL, metadata?.statusLabel)
+        putString(KEY_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE, metadata?.selectedSummaryTitle)
+        putString(KEY_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY, metadata?.recommendedStrategyId?.name)
+        putString(KEY_LANE_COMPATIBILITY_RECOMMENDATION, metadata?.recommendation)
+    }
+
+    private fun Bundle.putConfiguredLaneCompatibility(metadata: RuntimeLaneCompatibilityMetadata?) {
+        putString(KEY_CONFIGURED_LANE_COMPATIBILITY_STATUS_LABEL, metadata?.statusLabel)
+        putString(KEY_CONFIGURED_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE, metadata?.selectedSummaryTitle)
+        putString(KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY, metadata?.recommendedStrategyId?.name)
+        putString(KEY_CONFIGURED_LANE_COMPATIBILITY_RECOMMENDATION, metadata?.recommendation)
+    }
+
+    private fun decodeLaneCompatibility(bundle: Bundle): RuntimeLaneCompatibilityMetadata? = decodeLaneCompatibility(
+        bundle = bundle,
+        statusLabelKey = KEY_LANE_COMPATIBILITY_STATUS_LABEL,
+        selectedSummaryTitleKey = KEY_LANE_COMPATIBILITY_SELECTED_SUMMARY_TITLE,
+        recommendedStrategyKey = KEY_LANE_COMPATIBILITY_RECOMMENDED_STRATEGY,
+        recommendationKey = KEY_LANE_COMPATIBILITY_RECOMMENDATION,
+    )
+
+    private fun decodeLaneCompatibility(
+        bundle: Bundle,
+        statusLabelKey: String,
+        selectedSummaryTitleKey: String,
+        recommendedStrategyKey: String,
+        recommendationKey: String,
+    ): RuntimeLaneCompatibilityMetadata? {
+        val statusLabel = bundle.getString(statusLabelKey)
+        val selectedSummaryTitle = bundle.getString(selectedSummaryTitleKey)
+        val recommendedStrategyId = bundle.getString(recommendedStrategyKey)
+            ?.let(EmbeddedRuntimeStrategyId::valueOf)
+        val recommendation = bundle.getString(recommendationKey)
+        if (statusLabel.isNullOrBlank() && selectedSummaryTitle.isNullOrBlank() && recommendedStrategyId == null && recommendation == null) {
+            return null
+        }
+        if (statusLabel.isNullOrBlank() || selectedSummaryTitle.isNullOrBlank()) {
+            return null
+        }
+        return RuntimeLaneCompatibilityMetadata(
+            statusLabel = statusLabel,
+            selectedSummaryTitle = selectedSummaryTitle,
+            recommendedStrategyId = recommendedStrategyId,
+            recommendation = recommendation,
+        )
+    }
 
     fun encodeEgressIpObservation(observation: RuntimeEgressIpObservation): Bundle = Bundle().apply {
         putString(KEY_EGRESS_IP_STATUS, observation.status.name)

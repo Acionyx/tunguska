@@ -1,6 +1,7 @@
 package io.acionyx.tunguska.vpnservice
 
 import io.acionyx.tunguska.domain.DnsMode
+import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RegionalBypassSettings
 import io.acionyx.tunguska.domain.defaultRegionalBypass
@@ -13,6 +14,7 @@ import io.acionyx.tunguska.domain.VlessRealityOutbound
 import io.acionyx.tunguska.domain.VpnPolicy
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -21,6 +23,26 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
 
 class XrayCompatConfigCompilerTest {
+    @Test
+    fun `compiler routes proxy outbound through the current outbound shape`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile(),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val outbound = root.getValue("outbounds").jsonArray.first().jsonObject
+        val streamSettings = outbound.getValue("streamSettings").jsonObject
+
+        assertEquals("vless", outbound.getValue("protocol").jsonPrimitive.content)
+        assertEquals("tcp", streamSettings.getValue("network").jsonPrimitive.content)
+        assertEquals("reality", streamSettings.getValue("security").jsonPrimitive.content)
+    }
+
     @Test
     fun `compiler binds authenticated socks bridge to loopback only`() {
         val compiled = XrayCompatConfigCompiler.compile(
@@ -239,6 +261,60 @@ class XrayCompatConfigCompilerTest {
                     json["domain"]?.jsonArray?.any { it.jsonPrimitive.content == "domain:example.com" } == true
             },
         )
+    }
+
+    @Test
+    fun `compiler rejects route rules with only unsupported xray criteria`() {
+        val error = assertFailsWith<XrayCompatCompileException> {
+            XrayCompatConfigCompiler.compile(
+                profile = sampleProfile().copy(
+                    routing = sampleProfile().routing.copy(
+                        rules = listOf(
+                            RouteRule(
+                                id = "package-only",
+                                action = RouteAction.DIRECT,
+                                match = RouteMatch(
+                                    packageNames = listOf("io.acionyx.bank"),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                bridge = AuthenticatedLocalBridge(
+                    port = 25001,
+                    user = "bridge-user",
+                    password = "bridge-pass",
+                ),
+            )
+        }
+
+    assertEquals("routing.rules", error.fieldPath)
+        assertEquals(XrayCompatCompileSection.ROUTING, error.section)
+        assertTrue(error.message?.contains("Routing rule 'package-only' uses only criteria unsupported by the xray+tun2socks compatibility lane") == true)
+        assertTrue(error.message?.contains("packageNames") == true)
+    }
+
+    @Test
+    fun `compiler rejects invalid dot dns endpoints with explicit xray guidance`() {
+        val error = assertFailsWith<XrayCompatCompileException> {
+            XrayCompatConfigCompiler.compile(
+                profile = sampleProfile().copy(
+                    dns = DnsMode.CustomEncrypted(
+                        kind = EncryptedDnsKind.DOT,
+                        endpoints = listOf(""),
+                    ),
+                ),
+                bridge = AuthenticatedLocalBridge(
+                    port = 25001,
+                    user = "bridge-user",
+                    password = "bridge-pass",
+                ),
+            )
+        }
+
+        assertEquals("dns.endpoints", error.fieldPath)
+        assertEquals(XrayCompatCompileSection.DNS, error.section)
+        assertTrue(error.message?.contains("DNS endpoint '' is not a valid DoT address for the xray+tun2socks compatibility lane") == true)
     }
 
     private fun sampleProfile(): ProfileIr = ProfileIr(

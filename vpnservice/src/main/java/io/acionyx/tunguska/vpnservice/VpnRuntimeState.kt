@@ -1,5 +1,10 @@
 package io.acionyx.tunguska.vpnservice
 
+import io.acionyx.tunguska.domain.OutboundProtocolId
+import io.acionyx.tunguska.domain.OutboundSecurityId
+import io.acionyx.tunguska.domain.OutboundTransportId
+import io.acionyx.tunguska.domain.outboundShapeLabel
+
 enum class VpnRuntimePhase {
     IDLE,
     STAGED,
@@ -13,6 +18,14 @@ data class VpnRuntimeSnapshot(
     val configHash: String? = null,
     val sessionLabel: String? = null,
     val activeStrategy: EmbeddedRuntimeStrategyId? = null,
+    val runtimeConfigSource: RuntimeConfigSource? = null,
+    val configuredStrategy: EmbeddedRuntimeStrategyId? = null,
+    val configuredRuntimeConfigSource: RuntimeConfigSource? = null,
+    val configuredLaneCompatibility: RuntimeLaneCompatibilityMetadata? = null,
+    val profileProtocolId: OutboundProtocolId? = null,
+    val profileTransportId: OutboundTransportId? = null,
+    val profileSecurityId: OutboundSecurityId? = null,
+    val laneCompatibility: RuntimeLaneCompatibilityMetadata? = null,
     val engineId: String? = null,
     val engineFormat: String? = null,
     val compiledPayloadBytes: Int = 0,
@@ -50,6 +63,8 @@ data class VpnRuntimeSnapshot(
     val recentNativeEvents: List<String> = emptyList(),
     val sessionWorkspacePath: String? = null,
     val lastError: String? = null,
+    val lastErrorSection: String? = null,
+    val lastErrorFieldPath: String? = null,
 )
 
 object VpnRuntimeStore {
@@ -66,11 +81,20 @@ object VpnRuntimeStore {
         stagedRequest = request
         val plan = request.plan
         val spec = TunnelInterfacePlanner.plan(plan)
+        val activeRuntimeConfigSource = runtimeConfigSourceFor(request.runtimeStrategy)
         snapshot = VpnRuntimeSnapshot(
             phase = VpnRuntimePhase.STAGED,
             configHash = plan.configHash,
             sessionLabel = spec.sessionLabel,
             activeStrategy = request.runtimeStrategy,
+            runtimeConfigSource = activeRuntimeConfigSource,
+            configuredStrategy = request.runtimeStrategy,
+            configuredRuntimeConfigSource = activeRuntimeConfigSource,
+            configuredLaneCompatibility = request.laneCompatibility,
+            profileProtocolId = request.profileProtocolId,
+            profileTransportId = request.profileTransportId,
+            profileSecurityId = request.profileSecurityId,
+            laneCompatibility = request.laneCompatibility,
             engineId = request.compiledConfig.engineId,
             engineFormat = request.compiledConfig.format,
             compiledPayloadBytes = request.compiledConfig.payload.toByteArray(Charsets.UTF_8).size,
@@ -91,6 +115,8 @@ object VpnRuntimeStore {
             recentXrayLogLines = emptyList(),
             recentNativeEvents = emptyList(),
             lastError = null,
+            lastErrorSection = null,
+            lastErrorFieldPath = null,
         )
         snapshot
     }
@@ -99,6 +125,20 @@ object VpnRuntimeStore {
         snapshot = snapshot.copy(
             phase = VpnRuntimePhase.START_REQUESTED,
             lastError = null,
+            lastErrorSection = null,
+            lastErrorFieldPath = null,
+        )
+        snapshot
+    }
+
+    fun recordConfiguredStrategy(
+        strategy: EmbeddedRuntimeStrategyId,
+        laneCompatibility: RuntimeLaneCompatibilityMetadata? = null,
+    ): VpnRuntimeSnapshot = synchronized(lock) {
+        snapshot = snapshot.copy(
+            configuredStrategy = strategy,
+            configuredRuntimeConfigSource = runtimeConfigSourceFor(strategy),
+            configuredLaneCompatibility = laneCompatibility ?: snapshot.configuredLaneCompatibility,
         )
         snapshot
     }
@@ -128,6 +168,9 @@ object VpnRuntimeStore {
             lastEngineHostAtEpochMs = result.preparedAtEpochMs,
             lastEngineHostSummary = result.summary,
             sessionWorkspacePath = result.workspacePath,
+            lastError = if (result.status == EmbeddedEngineHostStatus.FAILED) result.summary else snapshot.lastError,
+            lastErrorSection = if (result.status == EmbeddedEngineHostStatus.FAILED) result.errorSection else snapshot.lastErrorSection,
+            lastErrorFieldPath = if (result.status == EmbeddedEngineHostStatus.FAILED) result.errorFieldPath else snapshot.lastErrorFieldPath,
         )
         snapshot
     }
@@ -147,6 +190,8 @@ object VpnRuntimeStore {
             } else {
                 snapshot.lastError
             },
+            lastErrorSection = if (result.status == EmbeddedEngineSessionStatus.FAILED) result.errorSection else snapshot.lastErrorSection,
+            lastErrorFieldPath = if (result.status == EmbeddedEngineSessionStatus.FAILED) result.errorFieldPath else snapshot.lastErrorFieldPath,
         )
         snapshot
     }
@@ -161,6 +206,8 @@ object VpnRuntimeStore {
             } else {
                 snapshot.lastError
             },
+            lastErrorSection = if (result.status == EmbeddedEngineSessionHealthStatus.FAILED) null else snapshot.lastErrorSection,
+            lastErrorFieldPath = if (result.status == EmbeddedEngineSessionHealthStatus.FAILED) null else snapshot.lastErrorFieldPath,
         )
         snapshot
     }
@@ -209,9 +256,19 @@ object VpnRuntimeStore {
     fun stop(): VpnRuntimeSnapshot = synchronized(lock) {
         RuntimeSessionWorkspaceCleaner.delete(snapshot.sessionWorkspacePath)
         stagedRequest = null
-        snapshot = VpnRuntimeSnapshot()
+        snapshot = VpnRuntimeSnapshot(
+            configuredStrategy = snapshot.configuredStrategy,
+            configuredRuntimeConfigSource = snapshot.configuredRuntimeConfigSource,
+            configuredLaneCompatibility = snapshot.configuredLaneCompatibility,
+        )
         snapshot
     }
 }
 
 private fun List<String>.appendBounded(value: String): List<String> = (this + value.trim().take(240)).takeLast(8)
+
+fun VpnRuntimeSnapshot.profileShapeLabel(): String? {
+    val protocolId = profileProtocolId ?: return null
+    val transportId = profileTransportId ?: return null
+    return outboundShapeLabel(protocolId, transportId, profileSecurityId)
+}

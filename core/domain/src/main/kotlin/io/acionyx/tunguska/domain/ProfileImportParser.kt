@@ -40,24 +40,39 @@ class ProfileImportException(
 )
 
 object ProfileImportParser {
+    private val handlerRegistry = ProfileImportHandlerRegistry(
+        handlers = listOf(
+            RegisteredImportHandler(
+                format = ImportedProfileFormat.VLESS_REALITY_URI,
+                canParse = { input ->
+                    input.startsWith("vless://", ignoreCase = true) ||
+                        input.startsWith("ess://", ignoreCase = true)
+                },
+                parse = ::parseShareUri,
+            ),
+            RegisteredImportHandler(
+                format = ImportedProfileFormat.JSON_PROFILE,
+                canParse = { input -> input.startsWith("{") },
+                parse = ::parseJsonProfile,
+            ),
+        ),
+    )
+
     fun parse(rawInput: String): ImportedProfile {
         val trimmed = rawInput.trim()
-        return when {
-            trimmed.startsWith("vless://", ignoreCase = true) -> parseShareUri(trimmed)
-            trimmed.startsWith("ess://", ignoreCase = true) -> parseShareUri(trimmed)
-            trimmed.startsWith("{") -> parseJsonProfile(trimmed)
-            else -> throw ProfileImportException(
+        return handlerRegistry.resolve(trimmed)?.parse(trimmed)
+            ?: throw ProfileImportException(
                 listOf(
                     issue(
                         "import.format",
-                        "Supported import formats are vless:// or ess:// REALITY share links and canonical JSON profiles.",
+                        "Supported import formats are ${handlerRegistry.supportedFormatsSummary()}.",
                     ),
                 ),
             )
-        }
     }
 
-    fun parseVlessUri(rawInput: String): ImportedProfile = parseShareUri(rawInput)
+    fun parseVlessUri(rawInput: String): ImportedProfile =
+        handlerRegistry.handlerFor(ImportedProfileFormat.VLESS_REALITY_URI).parse(rawInput.trim())
 
     private fun parseShareUri(rawInput: String): ImportedProfile {
         val input = rawInput.trim()
@@ -80,7 +95,10 @@ object ProfileImportParser {
         val issues = mutableListOf<ValidationIssue>()
         val scheme = uri.scheme?.lowercase()
         if (scheme !in SUPPORTED_URI_SCHEMES) {
-            issues += issue("import.scheme", "Only vless:// and ess:// REALITY share links are supported in v1.")
+            issues += issue(
+                "import.scheme",
+                "Only vless:// and ess:// share links for the current $SUPPORTED_SHARE_URI_SHAPE_LABEL shape are supported in v1.",
+            )
         }
 
         val userInfo = decodeComponent(uri.rawUserInfo.orEmpty())
@@ -101,12 +119,18 @@ object ProfileImportParser {
         val query = parseQuery(uri.rawQuery.orEmpty())
         val realitySecurity = query["security"]?.lowercase()
         if (realitySecurity != "reality") {
-            issues += issue("import.security", "Only REALITY-secured VLESS URIs are accepted.")
+            issues += issue(
+                "import.security",
+                "Only the REALITY security layer is accepted for the current $SUPPORTED_SHARE_URI_SHAPE_LABEL import shape.",
+            )
         }
 
         val transportType = query["type"]?.lowercase()
         if (transportType != null && transportType != "tcp") {
-            issues += issue("import.type", "Only TCP VLESS transport is accepted in v1.")
+            issues += issue(
+                "import.type",
+                "Only the TCP transport is accepted for the current $SUPPORTED_SHARE_URI_SHAPE_LABEL import shape.",
+            )
         }
 
         val encryption = query["encryption"]?.lowercase()
@@ -189,8 +213,8 @@ object ProfileImportParser {
                 normalizedScheme = "vless",
                 format = ImportedProfileFormat.VLESS_REALITY_URI,
                 summary = when (scheme) {
-                    "ess" -> "Validated an ess:// alias as a VLESS + REALITY share link."
-                    else -> "Validated a VLESS + REALITY share link."
+                    "ess" -> "Validated an ess:// alias as a $SUPPORTED_SHARE_URI_SHAPE_LABEL share link."
+                    else -> "Validated a $SUPPORTED_SHARE_URI_SHAPE_LABEL share link."
                 },
             ),
             warnings = warnings.toList(),
@@ -304,6 +328,32 @@ object ProfileImportParser {
     )
 
     private val SUPPORTED_URI_SCHEMES = setOf("vless", "ess")
+}
+
+private data class RegisteredImportHandler(
+    val format: ImportedProfileFormat,
+    val canParse: (String) -> Boolean,
+    val parse: (String) -> ImportedProfile,
+)
+
+private class ProfileImportHandlerRegistry(
+    private val handlers: List<RegisteredImportHandler>,
+) {
+    fun resolve(input: String): RegisteredImportHandler? = handlers.firstOrNull { handler -> handler.canParse(input) }
+
+    fun handlerFor(format: ImportedProfileFormat): RegisteredImportHandler =
+        handlers.first { handler -> handler.format == format }
+
+    fun supportedFormatsSummary(): String = handlers.joinToString(separator = " and ") { handler ->
+        when (handler.format) {
+            ImportedProfileFormat.VLESS_REALITY_URI -> "vless:// or ess:// share links for the current $SUPPORTED_SHARE_URI_SHAPE_LABEL shape"
+            ImportedProfileFormat.JSON_PROFILE -> "canonical JSON profiles"
+        }
+    }
+}
+
+private val SUPPORTED_SHARE_URI_SHAPE_LABEL: String = buildString {
+    append(outboundShapeLabel(OutboundProtocolId.VLESS_REALITY, OutboundTransportId.TCP, OutboundSecurityId.REALITY))
 }
 
 private fun JsonObject.routingContainsRegionalBypass(): Boolean {

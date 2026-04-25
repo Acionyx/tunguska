@@ -8,12 +8,17 @@ import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.domain.outboundProtocolLabel
+import io.acionyx.tunguska.domain.outboundSecurityLabel
+import io.acionyx.tunguska.domain.outboundShapeLabel
+import io.acionyx.tunguska.domain.outboundTransportLabel
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.netpolicy.RoutePreviewOutcome
 import io.acionyx.tunguska.storage.EncryptedArtifactStore
 import io.acionyx.tunguska.storage.LoadedArtifact
 import io.acionyx.tunguska.storage.StoredArtifact
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import io.acionyx.tunguska.vpnservice.profileShapeLabel
 import java.nio.file.Path
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -79,7 +84,10 @@ class SecureExportRepository(
             engineId = compiledConfig.engineId,
             configFormat = compiledConfig.format,
             profile = profile.toRedactedReport(),
-            runtime = runtimeSnapshot.toRedactedReport(),
+            runtime = runtimeSnapshot.toRedactedReport(
+                profile = profile,
+                configuredStrategyId = automationState.runtimeStrategy,
+            ),
             storage = profileStorage.toRedactedReport(),
             automation = automationState.toRedactedReport(),
             tunnelPlan = tunnelPlanSummary,
@@ -201,6 +209,10 @@ private data class DiagnosticBundlePayload(
 private data class RedactedProfileReport(
     val profileIdHash: String,
     val profileName: String,
+    val outboundShape: String,
+    val outboundProtocol: String,
+    val outboundTransport: String,
+    val outboundSecurity: String,
     val outboundAddressHash: String,
     val outboundPort: Int,
     val serverNameHash: String,
@@ -233,6 +245,15 @@ private data class RedactedRuntimeReport(
     val configHash: String?,
     val sessionLabelHash: String?,
     val activeStrategy: String?,
+    val configuredStrategy: String,
+    val compilerPath: String?,
+    val compilerPathSummary: String?,
+    val nextStartCompilerPath: String?,
+    val nextStartCompilerPathSummary: String?,
+    val profileShape: String?,
+    val profileProtocolId: String?,
+    val profileTransportId: String?,
+    val profileSecurityId: String?,
     val engineId: String?,
     val engineFormat: String?,
     val compiledPayloadBytes: Int,
@@ -260,6 +281,17 @@ private data class RedactedRuntimeReport(
     val recentNativeEvents: List<String>,
     val sessionWorkspacePresent: Boolean,
     val lastError: String?,
+    val lastErrorSection: String?,
+    val lastErrorFieldPath: String?,
+    val laneStatus: String,
+    val laneSummaryTitle: String,
+    val recommendedStrategy: String?,
+    val laneRecommendation: String?,
+    val nextStartLaneStatus: String?,
+    val nextStartLaneSummaryTitle: String?,
+    val nextStartLaneRecommendedStrategy: String?,
+    val nextStartLaneRecommendation: String?,
+    val restageHint: String?,
 )
 
 @Serializable
@@ -279,6 +311,9 @@ private data class RedactedAutomationReport(
     val vpnPermissionReady: Boolean,
     val lastAutomationStatus: String,
     val lastAutomationError: String?,
+    val lastAutomationErrorSection: String?,
+    val lastAutomationErrorFieldPath: String?,
+    val lastAutomationRuntimeMetadata: AutomationRuntimeMetadata?,
     val lastAutomationAt: String?,
     val lastCallerHint: String?,
     val storagePathHash: String,
@@ -299,6 +334,7 @@ private data class RedactedRoutePreviewReport(
 private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
     val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(this)
     val splitTunnel = vpn.splitTunnel
+    val outboundSummary = outboundSummary
     val allowCount = when (splitTunnel) {
         SplitTunnelMode.FullTunnel -> 0
         is SplitTunnelMode.Allowlist -> splitTunnel.packageNames.size
@@ -312,14 +348,18 @@ private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
     return RedactedProfileReport(
         profileIdHash = id.redactedDigest(),
         profileName = name,
-        outboundAddressHash = outbound.address.redactedDigest(),
-        outboundPort = outbound.port,
-        serverNameHash = outbound.serverName.redactedDigest(),
+        outboundShape = outboundSummary.shapeLabel,
+        outboundProtocol = outboundSummary.protocolLabel,
+        outboundTransport = outboundSummary.transportLabel,
+        outboundSecurity = outboundSummary.securityLabel,
+        outboundAddressHash = outboundSummary.endpoint.address.redactedDigest(),
+        outboundPort = outboundSummary.endpoint.port,
+        serverNameHash = outboundSummary.endpoint.serverName.redactedDigest(),
         uuidHash = outbound.uuid.redactedDigest(),
         realityPublicKeyHash = outbound.realityPublicKey.redactedDigest(),
         realityShortIdHash = outbound.realityShortId.redactedDigest(),
-        flow = outbound.flow,
-        utlsFingerprint = outbound.utlsFingerprint,
+        flow = outboundSummary.flow,
+        utlsFingerprint = outboundSummary.utlsFingerprint,
         splitTunnelMode = splitTunnel::class.simpleName.orEmpty(),
         allowPackageCount = allowCount,
         denyPackageCount = denyCount,
@@ -343,39 +383,80 @@ private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
     )
 }
 
-private fun VpnRuntimeSnapshot.toRedactedReport(): RedactedRuntimeReport = RedactedRuntimeReport(
-    phase = phase.name,
-    configHash = configHash,
-    sessionLabelHash = sessionLabel?.redactedDigest(),
-    activeStrategy = activeStrategy?.name,
-    engineId = engineId,
-    engineFormat = engineFormat,
-    compiledPayloadBytes = compiledPayloadBytes,
-    allowCount = allowCount,
-    denyCount = denyCount,
-    routeCount = routeCount,
-    excludedRouteCount = excludedRouteCount,
-    mtu = mtu,
-    runtimeMode = runtimeMode.name,
-    auditStatus = auditStatus.name,
-    auditFindingCount = auditFindingCount,
-    bootstrapStatus = bootstrapStatus.name,
-    engineHostStatus = engineHostStatus.name,
-    engineSessionStatus = engineSessionStatus.name,
-    engineSessionHealthStatus = engineSessionHealthStatus.name,
-    bridgePort = bridgePort,
-    xrayPid = xrayPid,
-    tun2socksPid = tun2socksPid,
-    ownPackageBypassesVpn = ownPackageBypassesVpn,
-    routedTrafficObserved = routedTrafficObserved,
-    lastRoutedTrafficAtEpochMs = lastRoutedTrafficAtEpochMs,
-    dnsFailureObserved = dnsFailureObserved,
-    lastDnsFailureSummary = lastDnsFailureSummary,
-    recentXrayLogLines = recentXrayLogLines,
-    recentNativeEvents = recentNativeEvents,
-    sessionWorkspacePresent = !sessionWorkspacePath.isNullOrBlank(),
-    lastError = lastError,
-)
+private fun VpnRuntimeSnapshot.toRedactedReport(
+    profile: ProfileIr,
+    configuredStrategyId: io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId,
+): RedactedRuntimeReport {
+    val effectiveConfiguredStrategy = configuredStrategy ?: configuredStrategyId
+    val nextStartCompilerPath = configuredRuntimeConfigSource
+        ?.takeIf { activeStrategy == null || configuredStrategy != activeStrategy || it != runtimeConfigSource }
+    val guidance = StrategyCapabilityRegistry.evaluateProfileGuidance(
+        profile = profile,
+        strategyId = activeStrategy ?: effectiveConfiguredStrategy,
+    )
+    val lanePresentation = runtimeLanePresentation(
+        activeStrategyId = activeStrategy,
+        configuredStrategyId = effectiveConfiguredStrategy,
+        guidance = guidance,
+        stagedMetadata = laneCompatibility,
+        configuredMetadata = configuredLaneCompatibility,
+    )
+    val laneSummary = lanePresentation.summaryLabels
+    val nextStartDetail = lanePresentation.nextStartDetail
+    return RedactedRuntimeReport(
+        phase = phase.name,
+        configHash = configHash,
+        sessionLabelHash = sessionLabel?.redactedDigest(),
+        activeStrategy = activeStrategy?.name,
+        configuredStrategy = effectiveConfiguredStrategy.name,
+        compilerPath = runtimeConfigSource?.let(::runtimeConfigSourceLabel),
+        compilerPathSummary = runtimeConfigSource?.let(::runtimeConfigSourceSummary),
+        nextStartCompilerPath = nextStartCompilerPath?.let(::runtimeConfigSourceLabel),
+        nextStartCompilerPathSummary = nextStartCompilerPath?.let(::runtimeConfigSourceSummary),
+        profileShape = profileShapeLabel(),
+        profileProtocolId = profileProtocolId?.name,
+        profileTransportId = profileTransportId?.name,
+        profileSecurityId = profileSecurityId?.name,
+        engineId = engineId,
+        engineFormat = engineFormat,
+        compiledPayloadBytes = compiledPayloadBytes,
+        allowCount = allowCount,
+        denyCount = denyCount,
+        routeCount = routeCount,
+        excludedRouteCount = excludedRouteCount,
+        mtu = mtu,
+        runtimeMode = runtimeMode.name,
+        auditStatus = auditStatus.name,
+        auditFindingCount = auditFindingCount,
+        bootstrapStatus = bootstrapStatus.name,
+        engineHostStatus = engineHostStatus.name,
+        engineSessionStatus = engineSessionStatus.name,
+        engineSessionHealthStatus = engineSessionHealthStatus.name,
+        bridgePort = bridgePort,
+        xrayPid = xrayPid,
+        tun2socksPid = tun2socksPid,
+        ownPackageBypassesVpn = ownPackageBypassesVpn,
+        routedTrafficObserved = routedTrafficObserved,
+        lastRoutedTrafficAtEpochMs = lastRoutedTrafficAtEpochMs,
+        dnsFailureObserved = dnsFailureObserved,
+        lastDnsFailureSummary = lastDnsFailureSummary,
+        recentXrayLogLines = recentXrayLogLines,
+        recentNativeEvents = recentNativeEvents,
+        sessionWorkspacePresent = !sessionWorkspacePath.isNullOrBlank(),
+        lastError = lastError,
+        lastErrorSection = lastErrorSection,
+        lastErrorFieldPath = lastErrorFieldPath,
+        laneStatus = laneSummary.statusLabel,
+        laneSummaryTitle = lanePresentation.selectedSummaryTitle,
+        recommendedStrategy = laneSummary.recommendedLaneLabel,
+        laneRecommendation = lanePresentation.recommendation,
+        nextStartLaneStatus = nextStartDetail?.statusLabel,
+        nextStartLaneSummaryTitle = nextStartDetail?.summaryTitle,
+        nextStartLaneRecommendedStrategy = nextStartDetail?.recommendedLaneLabel,
+        nextStartLaneRecommendation = nextStartDetail?.recommendation,
+        restageHint = laneSummary.restageHint,
+    )
+}
 
 private fun ProfileStorageState.toRedactedReport(): RedactedStorageReport = RedactedStorageReport(
     backend = backend,
@@ -392,6 +473,9 @@ private fun AutomationState.toRedactedReport(): RedactedAutomationReport = Redac
     vpnPermissionReady = vpnPermissionReady,
     lastAutomationStatus = lastAutomationStatus,
     lastAutomationError = lastAutomationError,
+    lastAutomationErrorSection = lastAutomationErrorSection,
+    lastAutomationErrorFieldPath = lastAutomationErrorFieldPath,
+    lastAutomationRuntimeMetadata = lastAutomationRuntimeMetadata,
     lastAutomationAt = lastAutomationAt,
     lastCallerHint = lastCallerHint,
     storagePathHash = storagePath.redactedDigest(),

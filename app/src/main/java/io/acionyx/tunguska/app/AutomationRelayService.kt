@@ -105,6 +105,9 @@ class AutomationRelayService : Service() {
             settingsRepository.recordResult(
                 status = result.status,
                 error = result.error ?: result.summary.takeIf { result.status != AutomationCommandStatus.SUCCESS },
+                errorSection = result.errorSection,
+                errorFieldPath = result.errorFieldPath,
+                runtimeMetadata = result.runtimeMetadata,
                 callerHint = callerHint,
             )
             statusStore.markCompleted(

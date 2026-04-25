@@ -6,6 +6,64 @@ import kotlinx.serialization.Serializable
 const val REQUIRED_VLESS_FLOW: String = "xtls-rprx-vision"
 const val DEFAULT_REALITY_SPIDER_X: String = "/"
 
+enum class OutboundProtocolId {
+    VLESS_REALITY,
+}
+
+enum class OutboundTransportId {
+    TCP,
+}
+
+enum class OutboundSecurityId {
+    REALITY,
+}
+
+data class ProfileEndpoint(
+    val address: String,
+    val port: Int,
+    val serverName: String,
+)
+
+data class OutboundSummary(
+    val protocolId: OutboundProtocolId,
+    val transportId: OutboundTransportId,
+    val securityId: OutboundSecurityId,
+    val protocolLabel: String,
+    val transportLabel: String,
+    val securityLabel: String,
+    val shapeLabel: String,
+    val endpoint: ProfileEndpoint,
+    val flow: String?,
+    val utlsFingerprint: String,
+)
+
+fun OutboundProtocolId.displayLabel(): String = when (this) {
+    OutboundProtocolId.VLESS_REALITY -> "VLESS + REALITY"
+}
+
+fun OutboundTransportId.displayLabel(): String = when (this) {
+    OutboundTransportId.TCP -> "TCP"
+}
+
+fun OutboundSecurityId.displayLabel(): String = when (this) {
+    OutboundSecurityId.REALITY -> "REALITY"
+}
+
+fun outboundShapeLabel(
+    protocolId: OutboundProtocolId,
+    transportId: OutboundTransportId,
+    securityId: OutboundSecurityId? = null,
+): String {
+    val protocolLabel = protocolId.displayLabel()
+    val transportLabel = transportId.displayLabel()
+    val securityLabel = securityId?.displayLabel()
+    return if (securityLabel != null && !protocolLabel.contains(securityLabel, ignoreCase = true)) {
+        "$protocolLabel over $transportLabel with $securityLabel"
+    } else {
+        "$protocolLabel over $transportLabel"
+    }
+}
+
 @Serializable
 data class ProfileIr(
     val id: String,
@@ -16,6 +74,36 @@ data class ProfileIr(
     val dns: DnsMode = DnsMode.SystemDns,
     val safety: SafetySettings = SafetySettings(),
 ) {
+    val outboundProtocolId: OutboundProtocolId
+        get() = outbound.protocolId
+
+    val outboundTransportId: OutboundTransportId
+        get() = outbound.transportId
+
+    val outboundSecurityId: OutboundSecurityId
+        get() = outbound.securityId
+
+    val primaryEndpoint: ProfileEndpoint
+        get() = ProfileEndpoint(
+            address = outbound.address,
+            port = outbound.port,
+            serverName = outbound.serverName,
+        )
+
+    val outboundSummary: OutboundSummary
+        get() = OutboundSummary(
+            protocolId = outboundProtocolId,
+            transportId = outboundTransportId,
+            securityId = outboundSecurityId,
+            protocolLabel = outboundProtocolId.displayLabel(),
+            transportLabel = outboundTransportId.displayLabel(),
+            securityLabel = outboundSecurityId.displayLabel(),
+            shapeLabel = outboundShapeLabel(outboundProtocolId, outboundTransportId, outboundSecurityId),
+            endpoint = primaryEndpoint,
+            flow = outbound.flow,
+            utlsFingerprint = outbound.utlsFingerprint,
+        )
+
     fun validate(): List<ValidationIssue> = buildList {
         if (id.isBlank()) add(ValidationIssue("id", "Profile id must not be blank."))
         if (name.isBlank()) add(ValidationIssue("name", "Profile name must not be blank."))
@@ -31,6 +119,20 @@ data class ProfileIr(
     fun canonicalHash(): String = CanonicalJson.sha256Hex(canonicalJson())
 }
 
+fun ProfileIr.outboundProtocolLabel(): String = outboundSummary.protocolLabel
+
+fun ProfileIr.outboundTransportLabel(): String = outboundSummary.transportLabel
+
+fun ProfileIr.outboundSecurityLabel(): String = outboundSummary.securityLabel
+
+fun ProfileIr.outboundShapeLabel(): String = outboundShapeLabel(
+    protocolId = outboundProtocolId,
+    transportId = outboundTransportId,
+    securityId = outboundSecurityId,
+)
+
+fun ProfileIr.endpointSummary(): String = "${primaryEndpoint.address}:${primaryEndpoint.port}"
+
 @Serializable
 data class VlessRealityOutbound(
     val address: String,
@@ -43,6 +145,15 @@ data class VlessRealityOutbound(
     val flow: String? = null,
     val utlsFingerprint: String = "chrome",
 ) {
+    val protocolId: OutboundProtocolId
+        get() = OutboundProtocolId.VLESS_REALITY
+
+    val transportId: OutboundTransportId
+        get() = OutboundTransportId.TCP
+
+    val securityId: OutboundSecurityId
+        get() = OutboundSecurityId.REALITY
+
     fun effectiveRealitySpiderX(): String = realitySpiderX ?: DEFAULT_REALITY_SPIDER_X
 
     fun validate(): List<ValidationIssue> = buildList {
@@ -198,6 +309,7 @@ sealed interface DnsMode {
     @Serializable
     @SerialName("custom_encrypted")
     data class CustomEncrypted(
+        @SerialName("encryptedKind")
         val kind: EncryptedDnsKind,
         val endpoints: List<String>,
     ) : DnsMode {

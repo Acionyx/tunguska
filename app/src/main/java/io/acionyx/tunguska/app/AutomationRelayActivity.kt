@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
+import io.acionyx.tunguska.domain.CanonicalJson
+import kotlinx.serialization.encodeToString
 
 class AutomationRelayActivity : ComponentActivity() {
     private val settingsRepository by lazy { AutomationIntegrationRepository(applicationContext) }
@@ -107,6 +109,14 @@ class AutomationRelayActivity : ComponentActivity() {
             Intent().apply {
                 putExtra(AutomationRelayContract.EXTRA_RESULT_STATUS, result.status.name)
                 result.error?.let { putExtra(AutomationRelayContract.EXTRA_RESULT_ERROR, it) }
+                result.errorSection?.let { putExtra(AutomationRelayContract.EXTRA_RESULT_ERROR_SECTION, it) }
+                result.errorFieldPath?.let { putExtra(AutomationRelayContract.EXTRA_RESULT_ERROR_FIELD_PATH, it) }
+                result.runtimeMetadata?.let { metadata ->
+                    putExtra(
+                        AutomationRelayContract.EXTRA_RESULT_RUNTIME_METADATA_JSON,
+                        CanonicalJson.instance.encodeToString(metadata),
+                    )
+                }
             },
         )
     }
@@ -118,6 +128,9 @@ class AutomationRelayActivity : ComponentActivity() {
         settingsRepository.recordResult(
             status = result.status,
             error = result.error ?: result.summary.takeIf { result.status != AutomationCommandStatus.SUCCESS },
+            errorSection = result.errorSection,
+            errorFieldPath = result.errorFieldPath,
+            runtimeMetadata = result.runtimeMetadata,
             callerHint = callerHint,
         )
         return result

@@ -55,6 +55,26 @@ class VpnRuntimeControlService : Service() {
                     }
                 }
 
+                VpnRuntimeContract.MSG_SET_CONFIGURED_RUNTIME_STRATEGY -> {
+                    runCatching {
+                        VpnRuntimeStore.recordConfiguredStrategy(
+                            strategy = VpnRuntimeContract.decodeConfiguredRuntimeStrategy(msg.data),
+                            laneCompatibility = VpnRuntimeContract.decodeConfiguredLaneCompatibility(msg.data),
+                        )
+                        VpnRuntimeContract.statusMessage(runRuntimeAudit())
+                    }.onSuccess { response ->
+                        reply(msg.replyTo, response)
+                    }.onFailure { error ->
+                        reply(
+                            msg.replyTo,
+                            VpnRuntimeContract.errorMessage(
+                                message = error.message ?: error.javaClass.simpleName,
+                                snapshot = VpnRuntimeStore.snapshot(),
+                            ),
+                        )
+                    }
+                }
+
                 VpnRuntimeContract.MSG_STAGE_PLAN -> {
                     if (ActiveRuntimeSessionStore.isActive()) {
                         reply(

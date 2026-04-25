@@ -46,6 +46,14 @@ class AutomationRelayStatusStoreTest {
             status = AutomationCommandStatus.RUNTIME_START_FAILED,
             summary = "The isolated Tunguska runtime did not reach RUNNING.",
             error = "Timed out",
+            errorSection = "Routing",
+            errorFieldPath = "routing.rules",
+            runtimeMetadata = AutomationRuntimeMetadata(
+                laneLabel = "Xray + tun2socks",
+                laneStatus = "Fallback with limits",
+                connectDecisionSummary = "Start failed on Xray + tun2socks. Recommended: Sing-box embedded.",
+                compilerPath = "Canonical profile rebuild",
+            ),
         )
 
         val stored = store.markRejected(
@@ -56,5 +64,13 @@ class AutomationRelayStatusStoreTest {
 
         assertEquals(AutomationCommandStatus.RUNTIME_START_FAILED.name, stored.status)
         assertEquals("Timed out", store.load()?.error)
+        assertEquals("Routing", store.load()?.errorSection)
+        assertEquals("routing.rules", store.load()?.errorFieldPath)
+        assertEquals("Xray + tun2socks", store.load()?.runtimeMetadata?.laneLabel)
+        assertEquals(
+            "Start failed on Xray + tun2socks. Recommended: Sing-box embedded.",
+            store.load()?.runtimeMetadata?.connectDecisionSummary,
+        )
+        assertEquals("Canonical profile rebuild", store.load()?.runtimeMetadata?.compilerPath)
     }
 }

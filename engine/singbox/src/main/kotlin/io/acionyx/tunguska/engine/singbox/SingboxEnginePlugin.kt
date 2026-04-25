@@ -9,6 +9,10 @@ import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteRule
 import io.acionyx.tunguska.engine.api.CompiledRuntimeAsset
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
+import io.acionyx.tunguska.engine.api.EngineCapabilityFeature
+import io.acionyx.tunguska.engine.api.EngineCapabilityMatrix
+import io.acionyx.tunguska.engine.api.EngineCapabilitySupport
+import io.acionyx.tunguska.engine.api.EngineCapabilitySupportState
 import io.acionyx.tunguska.engine.api.EngineCapabilities
 import io.acionyx.tunguska.engine.api.EnginePlugin
 import io.acionyx.tunguska.engine.api.InvalidProfileException
@@ -30,6 +34,60 @@ class SingboxEnginePlugin : EnginePlugin {
         supportsVlessReality = true,
         supportsUdp = true,
         requiresLocalProxy = false,
+        capabilityMatrix = EngineCapabilityMatrix(
+            features = listOf(
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.VLESS_REALITY,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "Compiles the current VLESS + REALITY profile shape directly into sing-box.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.TCP_TRANSPORT,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "TCP transport is executed natively in the sing-box lane.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.UDP_RELAY,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "UDP stays on the native libbox path instead of riding a compatibility bridge.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.REALITY_SECURITY,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "REALITY fields map directly to the sing-box outbound configuration.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.TUN_INBOUND,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "Creates a native TUN inbound inside sing-box with no local proxy hop.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.ENCRYPTED_DNS,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "System, VPN, DoH, and DoT DNS modes compile directly into sing-box.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.PACKAGE_SPLIT_TUNNEL,
+                    state = EngineCapabilitySupportState.SUPPORTED_WITH_LIMITS,
+                    summary = "Per-app split tunnel works here, but allowlist mode still leaves the VPN control app outside the tunnel so the session can keep managing itself.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.DEFAULT_NETWORK_HANDOFF_RECOVERY,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "libbox tracks interface changes directly and does not need the xray restart monitor on network handoff.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.LOCAL_PROXY_BRIDGE,
+                    state = EngineCapabilitySupportState.UNSUPPORTED,
+                    summary = "This lane does not rely on a local SOCKS bridge between the VPN TUN and the outbound engine.",
+                ),
+                EngineCapabilitySupport(
+                    feature = EngineCapabilityFeature.CANONICAL_PROFILE_COMPILATION,
+                    state = EngineCapabilitySupportState.SUPPORTED,
+                    summary = "Compiles the canonical profile directly without a fallback-only transformation step.",
+                ),
+            ),
+        ),
     )
 
     override fun compile(profile: ProfileIr): CompiledEngineConfig {
