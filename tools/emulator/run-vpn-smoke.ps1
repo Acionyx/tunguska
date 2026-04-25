@@ -14,6 +14,7 @@ param(
         "io.acionyx.tunguska.app.RegionalBypassProofTest",
         "io.acionyx.tunguska.app.AutomationRelayProofTest",
         "io.acionyx.tunguska.app.FullTunnelProofTest",
+        "io.acionyx.tunguska.app.FullTunnelLiteralIpProbeTest",
         "io.acionyx.tunguska.app.DenylistRoutingProofTest",
         "io.acionyx.tunguska.app.AllowlistRoutingProofTest",
         "io.acionyx.tunguska.app.SingboxEmbeddedProofTest",
@@ -44,6 +45,24 @@ function Assert-EmulatorOnline {
     if (-not $emulatorProcess) {
         throw "adb reports an emulator device, but no emulator process is running locally."
     }
+}
+
+function Wait-ForTunguskaReset {
+    param([int]$TimeoutSeconds = 15)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $ipAddr = & $adb shell ip addr
+        $processList = & $adb shell ps
+        $vpnAddressPresent = ($ipAddr | Select-String -Pattern "172\.19\.0\.1|fdfe:dcba:9876::1" -Quiet)
+        $tunguskaProcessesPresent = ($processList | Select-String -Pattern "io\.acionyx\.tunguska(?::vpn)?|io\.acionyx\.tunguska\.trafficprobe(?::probe)?" -Quiet)
+        if (-not $vpnAddressPresent -and -not $tunguskaProcessesPresent) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+
+    throw "Tunguska processes or VPN addresses did not fully reset within ${TimeoutSeconds}s."
 }
 
 function Assert-LastExitCode {
@@ -191,6 +210,10 @@ try {
         foreach ($testClass in $TestClasses) {
             Assert-EmulatorOnline
             Write-Host "Phase: run $testClass"
+            & $adb shell am force-stop io.acionyx.tunguska
+            & $adb shell am force-stop io.acionyx.tunguska.trafficprobe
+            & $adb shell am force-stop com.android.chrome
+            Wait-ForTunguskaReset
             $instrumentArgs = @(
                 "shell", "am", "instrument", "-w", "-r",
                 "-e", "class", $testClass
@@ -203,6 +226,15 @@ try {
             Assert-EmulatorOnline
         }
         & "tools\emulator\pull-diagnostics.ps1"
+    }
+    catch {
+        Write-Warning "Smoke run failed: $($_.Exception.Message)"
+        try {
+            & "tools\emulator\pull-diagnostics.ps1"
+        } catch {
+            Write-Warning "Failed to pull smoke diagnostics after failure: $($_.Exception.Message)"
+        }
+        throw
     }
     finally {
         if ($managingProfileFixture) {

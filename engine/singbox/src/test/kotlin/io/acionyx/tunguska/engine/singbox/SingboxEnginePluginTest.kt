@@ -29,6 +29,7 @@ class SingboxEnginePluginTest {
         val json = CanonicalJson.instance.parseToJsonElement(compiled.payload).jsonObject
         val route = json.getValue("route").jsonObject
         val rules = route.getValue("rules").jsonArray
+        val inbound = json.getValue("inbounds").jsonArray.first().jsonObject
         val outbound = json.getValue("outbounds").jsonArray.first().jsonObject
         val dns = json.getValue("dns").jsonObject
 
@@ -37,6 +38,9 @@ class SingboxEnginePluginTest {
         assertEquals("sniff", rules.first().jsonObject.getValue("action").jsonPrimitive.content)
         assertEquals("direct", rules[1].jsonObject.getValue("outbound").jsonPrimitive.content)
         assertEquals("hijack-dns", rules[2].jsonObject.getValue("action").jsonPrimitive.content)
+        assertEquals("gvisor", inbound.getValue("stack").jsonPrimitive.content)
+        assertEquals("true", inbound.getValue("strict_route").jsonPrimitive.content)
+        assertEquals("9000", inbound.getValue("mtu").jsonPrimitive.content)
         assertEquals("proxy", route.getValue("final").jsonPrimitive.content)
         assertEquals("edge.example.com", outbound.getValue("server").jsonPrimitive.content)
         assertEquals("dns-remote-0", dns.getValue("final").jsonPrimitive.content)

@@ -135,7 +135,7 @@ class SingboxEnginePlugin : EnginePlugin {
         put("tag", "tun-in")
         put("auto_route", true)
         put("strict_route", true)
-        put("stack", "system")
+        put("stack", "gvisor")
         put("mtu", 9000)
         put("address", buildJsonArray {
             add(JsonPrimitive("172.19.0.1/30"))

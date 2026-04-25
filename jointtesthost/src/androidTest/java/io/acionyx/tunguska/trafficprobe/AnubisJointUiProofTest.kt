@@ -21,7 +21,7 @@ class AnubisJointUiProofTest {
             harness.ensureAnubisShizukuPermissionGranted()
             harness.configureAnubisTunguskaClient(token)
             harness.addAppToAnubisGroup(
-                groupLabel = "Ð—Ð°Ð¿ÑƒÑÐº Ñ VPN",
+                groupLabel = "Запуск с VPN",
                 searchQuery = "io.acionyx.tunguska.trafficprobe",
                 resultText = "Traffic Probe",
             )

@@ -150,6 +150,16 @@ Java_io_acionyx_tunguska_vpnservice_VpnNativeProcessBridge_nativeKillProcess(
     return kill(static_cast<pid_t>(pid), SIGKILL);
 }
 
+JNIEXPORT jboolean JNICALL
+Java_io_acionyx_tunguska_vpnservice_VpnNativeProcessBridge_nativeIsProcessAlive(
+        JNIEnv *, jclass, jlong pid) {
+    if (pid <= 0) return JNI_FALSE;
+    if (kill(static_cast<pid_t>(pid), 0) == 0) {
+        return JNI_TRUE;
+    }
+    return errno == EPERM ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL
 Java_io_acionyx_tunguska_vpnservice_VpnNativeProcessBridge_nativeSetMaxFds(
         JNIEnv *, jclass, jint maxFds) {

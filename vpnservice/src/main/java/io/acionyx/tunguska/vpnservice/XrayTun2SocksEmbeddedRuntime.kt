@@ -549,7 +549,7 @@ private class XrayTun2SocksEmbeddedEngineSession(
 
     private fun isPidAlive(pid: Long): Boolean {
         if (pid <= 0L) return false
-        return File("/proc/$pid/stat").exists()
+        return VpnNativeProcessBridge.nativeIsProcessAlive(pid)
     }
 
     private fun failure(
@@ -1177,6 +1177,9 @@ object VpnNativeProcessBridge {
 
     @JvmStatic
     external fun nativeKillProcess(pid: Long): Int
+
+    @JvmStatic
+    external fun nativeIsProcessAlive(pid: Long): Boolean
 
     @JvmStatic
     external fun nativeSetMaxFds(maxFds: Int): Int

@@ -420,6 +420,7 @@ internal class VpnTestHarness(
     }
 
     fun openChromeAndReadIp(label: String): String {
+        waitForVpnEgressReadinessIfActive()
         resetChromeState()
         val failures = mutableListOf<String>()
         for (candidateUrl in PROBE_URL_CANDIDATES) {
@@ -438,6 +439,7 @@ internal class VpnTestHarness(
     }
 
     fun launchTrafficProbeAndReadIp(label: String): String {
+        waitForVpnEgressReadinessIfActive()
         val failures = mutableListOf<String>()
         for (candidateUrl in PROBE_URL_CANDIDATES) {
             val urlLabel = sanitizeLabel(URI(candidateUrl).host ?: "probe")
@@ -462,6 +464,22 @@ internal class VpnTestHarness(
         captureDiagnostics("trafficprobe_${label}_final_failure")
         fail("Unable to read a public IP in trafficprobe. ${failures.joinToString(" | ")}")
         error("unreachable")
+    }
+
+    fun launchTrafficProbeAndAssertSuccess(label: String, probeUrl: String) {
+        waitForVpnEgressReadinessIfActive()
+        val urlLabel = sanitizeLabel(URI(probeUrl).host ?: "probe")
+        device.executeShellCommand(
+            "am start -W -S -n $TRAFFIC_PROBE_COMPONENT " +
+                "--ez io.acionyx.tunguska.trafficprobe.extra.AUTO_PROBE true " +
+                "--es io.acionyx.tunguska.trafficprobe.extra.PROBE_URL $probeUrl",
+        )
+        assertTrue(
+            "Traffic probe did not reach the foreground.",
+            device.wait(Until.hasObject(By.pkg(TRAFFIC_PROBE_PACKAGE)), 10_000),
+        )
+        captureStep("trafficprobe_${label}_${urlLabel}_launched")
+        waitForTrafficProbeSuccess(label = "trafficprobe_${label}_$urlLabel")
     }
 
     fun launchTunguska() {
@@ -510,6 +528,7 @@ internal class VpnTestHarness(
 
     fun captureDiagnostics(label: String) {
         captureVisualDiagnostics(label)
+        writeRuntimeSnapshot(label)
         writeCommandOutput(
             fileName = "$label-logcat.txt",
             command = "logcat -d -v threadtime -s " +
@@ -599,7 +618,10 @@ internal class VpnTestHarness(
         repeat(6) {
             var tapped = false
             for (text in promptTexts) {
-                val candidate = device.wait(Until.findObject(By.textContains(text)), 800)
+                val candidate = device.wait(
+                    Until.findObject(By.text(Pattern.compile("(?i).*${Pattern.quote(text)}.*"))),
+                    800,
+                )
                 if (candidate != null) {
                     candidate.click()
                     tapped = true
@@ -788,6 +810,33 @@ internal class VpnTestHarness(
         }
     }
 
+    private fun waitForVpnEgressReadinessIfActive(timeoutMillis: Long = 45_000) {
+        val snapshot = runCatching { requestRuntimeSnapshot() }.getOrNull() ?: return
+        if (snapshot.phase != VpnRuntimePhase.RUNNING || !isVpnTransportActive()) {
+            return
+        }
+
+        launchTunguska()
+        openSection(UiTags.TAB_HOME)
+        val found = runCatching {
+            composeRule.waitUntil(timeoutMillis = timeoutMillis) {
+                hasComposeText("Exit IP ") ||
+                    hasComposeText("Can't detect exit IP.") ||
+                    hasComposeText("Exit IP unavailable")
+            }
+            true
+        }.getOrDefault(false)
+        if (!found) {
+            captureDiagnostics("vpn_egress_readiness_timeout")
+            fail("VPN reached RUNNING but the home egress status never resolved.")
+        }
+        if (hasComposeText("Can't detect exit IP.") || hasComposeText("Exit IP unavailable")) {
+            captureDiagnostics("vpn_egress_readiness_error")
+            fail("VPN reached RUNNING but Tunguska could not observe a tunnel exit IP.")
+        }
+        captureStep("vpn_egress_ready")
+    }
+
     private fun hasComposeText(text: String): Boolean = composeRule
         .onAllNodesWithText(text = text, substring = true, useUnmergedTree = true)
         .fetchSemanticsNodes()
@@ -908,6 +957,38 @@ internal class VpnTestHarness(
         return ProbeResult.Failure("Timed out waiting for a visible public IP in $packageName.")
     }
 
+    private fun waitForTrafficProbeSuccess(label: String) {
+        val deadline = System.currentTimeMillis() + 12_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (device.findObject(By.textContains("Status: success")) != null) {
+                return
+            }
+
+            val errorView = device.findObject(By.textContains("Error:"))
+            if (errorView != null) {
+                captureDiagnostics("${label}_probe_error")
+                fail(errorView.text)
+            }
+
+            val dump = dumpWindowHierarchy()
+            if (dump.contains("Status: success", ignoreCase = true)) {
+                return
+            }
+            if (dump.contains("Status: error", ignoreCase = true)) {
+                captureDiagnostics("${label}_probe_error")
+                fail("Traffic probe reported an error for the requested endpoint.")
+            }
+            detectProbeFailure(dump)?.let {
+                captureDiagnostics("${label}_probe_error")
+                fail(it)
+            }
+
+            Thread.sleep(1_000)
+        }
+        captureDiagnostics("${label}_success_timeout")
+        fail("Timed out waiting for trafficprobe success for the requested endpoint.")
+    }
+
     private fun exportRedactedDiagnosticBundle(label: String) {
         val stored = runCatching { profileRepository.reload() }
             .getOrElse { profileRepository.loadOrSeed(defaultBootstrapProfile()).storedProfile }
@@ -997,6 +1078,17 @@ internal class VpnTestHarness(
     private fun writeCommandOutput(fileName: String, command: String) {
         diagnosticsDirectory.resolve(fileName).writeText(
             redactSensitiveText(device.executeShellCommand(command)),
+        )
+    }
+
+    private fun writeRuntimeSnapshot(label: String) {
+        val contents = runCatching {
+            requestRuntimeSnapshot().toString()
+        }.getOrElse { error ->
+            "Failed to capture runtime snapshot: ${error.message ?: error.javaClass.simpleName}"
+        }
+        diagnosticsDirectory.resolve("$label-runtime-snapshot.txt").writeText(
+            redactSensitiveText(contents),
         )
     }
 

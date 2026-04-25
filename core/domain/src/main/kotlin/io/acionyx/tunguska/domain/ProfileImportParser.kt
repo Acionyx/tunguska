@@ -299,7 +299,7 @@ object ProfileImportParser {
     }
 
     private fun decodeComponent(value: String): String {
-        return URLDecoder.decode(value.replace("+", "%2B"), "UTF-8")
+        return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8.name())
     }
 
     private fun isTruthy(value: String?): Boolean {

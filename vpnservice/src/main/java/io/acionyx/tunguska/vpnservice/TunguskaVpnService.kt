@@ -75,10 +75,10 @@ class TunguskaVpnService : VpnService() {
                 if (ActiveRuntimeSessionStore.isActive()) {
                     updateDefaultNetworkMonitor(activeRecoveryStrategy())
                     scheduleHealthChecks()
-                    return START_STICKY
+                    return START_NOT_STICKY
                 }
                 if (startInFlight) {
-                    return START_STICKY
+                    return START_NOT_STICKY
                 }
                 val request = VpnRuntimeStore.stagedRequest() ?: return START_NOT_STICKY
                 val snapshot = VpnRuntimeStore.snapshot()
@@ -133,7 +133,7 @@ class TunguskaVpnService : VpnService() {
                         scheduleHealthChecks()
                     }
                 }
-                START_STICKY
+                START_NOT_STICKY
             }
 
             else -> START_NOT_STICKY
